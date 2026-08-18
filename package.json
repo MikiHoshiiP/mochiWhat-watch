@@ -5,7 +5,7 @@
   "main": "mercari-watch.js",
   "scripts": {
     "watch": "node mercari-watch.js",
-    "watch:loop": "node mercari-watch.js --loop 10"
+    "watch:loop": "node mercari-watch.js --loop 1"
   },
   "keywords": [],
   "author": "",
