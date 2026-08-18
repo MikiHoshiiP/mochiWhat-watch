@@ -73,13 +73,30 @@ const CONFIG = {
 |---|---|
 | `PROXY` | 覆盖代理地址 |
 | `BROWSER_CHANNEL` | 浏览器通道:`msedge` / `chrome`(默认 Playwright 自带 Chromium) |
+| `SCT_KEY` | Server酱 SendKey,设置后低价商品推送微信「服务通知」 |
 | `WECOM_WEBHOOK` | 企业微信群机器人 webhook,设置后低价商品同时推送企业微信 |
+
+## 手机推送(微信)
+
+推荐 **Server酱**(免费、个人可用):在 [sct.ftqq.com](https://sct.ftqq.com) 用 GitHub 登录,获取 SendKey,然后:
+
+```bash
+# 方式一:环境变量(临时)
+set SCT_KEY=你的SendKey
+node mercari-watch.js --loop 15
+
+# 方式二:写入 watch.bat(开机自启也生效)
+#   编辑 watch.bat,把 SCT_KEY=你的SendKey 替换成真实 SendKey
+```
+
+设置后,抓到低价商品会同时弹桌面通知 + 推送微信「服务通知」。
 
 ## 通知渠道
 
 | 渠道 | 默认 | 说明 |
 |---|---|---|
 | Windows 桌面通知 | ✅ | 新低价商品出现时右下角 toast |
+| Server酱 → 微信 | ❌ | 设置 `SCT_KEY` 后启用,推送微信「服务通知」 |
 | 企业微信机器人 | ❌ | 设置 `WECOM_WEBHOOK` 后启用,推送完整列表 |
 | 控制台 / `watch.log` | ✅ | 每次运行输出抓取统计与低价列表 |
 

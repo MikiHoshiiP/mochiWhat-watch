@@ -135,7 +135,22 @@ async function notify(items) {
     console.log('[✓] 已发送桌面通知');
   } catch (e) { console.error('[!] 桌面通知失败:', e.message); }
 
-  // 2) 企业微信机器人(配置 WECOM_WEBHOOK 后启用),完整列表
+  // 2) Server酱 → 微信(配置 SCT_KEY 后启用)。SendKey 在 https://sct.ftqq.com 获取
+  if (process.env.SCT_KEY) {
+    try {
+      const title = `低价! ${items.length} 件もちwhat`;
+      const resp = await fetch(`https://sctapi.ftqq.com/${process.env.SCT_KEY}.send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ title, desp: body }),
+      });
+      const result = await resp.json();
+      if (result.code === 0) console.log('[✓] 已发送 Server酱(微信)通知');
+      else console.error('[!] Server酱通知失败:', JSON.stringify(result));
+    } catch (e) { console.error('[!] Server酱通知失败:', e.message); }
+  }
+
+  // 3) 企业微信机器人(配置 WECOM_WEBHOOK 后启用),完整列表
   if (process.env.WECOM_WEBHOOK) {
     try {
       await fetch(process.env.WECOM_WEBHOOK, {
@@ -147,7 +162,7 @@ async function notify(items) {
     } catch (e) { console.error('[!] 企业微信通知失败:', e.message); }
   }
 
-  // 3) 控制台输出(始终),完整列表
+  // 4) 控制台输出(始终),完整列表
   console.log('\n[低价商品 ' + items.length + ' 件]');
   console.log(body);
 }
