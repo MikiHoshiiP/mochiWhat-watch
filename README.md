@@ -43,9 +43,9 @@ npx playwright install chromium-headless-shell
 | 命令 | 说明 |
 |---|---|
 | `node mercari-watch.js` | 单次检查(调试用) |
-| `node mercari-watch.js --loop 15` | 每 15 分钟检查一次(数字可改) |
+| `node mercari-watch.js --loop 10` | 每 10 分钟检查一次(数字可改) |
 | `npm run watch` | 单次检查 |
-| `npm run watch:loop` | 每 15 分钟循环 |
+| `npm run watch:loop` | 每 10 分钟循环 |
 | `watch.bat` | 循环运行,日志写入 `watch.log`(推荐) |
 
 ### 开机自动运行(已配置)
@@ -63,7 +63,7 @@ const CONFIG = {
   proxy: 'http://127.0.0.1:7897', // 本地代理地址(连 Mercari 必需)
   timeout: 60000,              // 页面加载超时(ms)
   stateFile: __dirname + '/seen.json',  // 已通知商品记录
-  loopMinutes: 15,             // 循环间隔(分钟)
+  loopMinutes: 10,             // 循环间隔(分钟)
 };
 ```
 
@@ -83,7 +83,7 @@ const CONFIG = {
 ```bash
 # 方式一:环境变量(临时)
 set SCT_KEY=你的SendKey
-node mercari-watch.js --loop 15
+node mercari-watch.js --loop 10
 
 # 方式二:写入 watch.bat(开机自启也生效)
 #   编辑 watch.bat,把 SCT_KEY=你的SendKey 替换成真实 SendKey
@@ -106,7 +106,7 @@ node mercari-watch.js --loop 15
 mochi/
 ├── mercari-watch.js   # 主程序:抓取 → 筛选 → 去重 → 通知
 ├── toast.ps1          # Windows 桌面通知(PowerShell)
-├── watch.bat          # 循环启动脚本(每 15 分钟)
+├── watch.bat          # 循环启动脚本(每 10 分钟)
 ├── package.json       # 依赖(playwright)
 ├── seen.json          # 已通知商品记录(自动生成,勿手动编辑)
 └── watch.log          # 运行日志(自动生成)
@@ -127,7 +127,7 @@ A: 删除 `seen.json`,下次运行会重新通知所有当前低价商品。
 A: 不会。每个商品 URL 记录在 `seen.json`,仅首次出现时通知(原子写入,防止崩溃损坏)。
 
 **Q: 监控频率可以更快吗**
-A: 可以,改 `--loop` 后的分钟数或 `CONFIG.loopMinutes`。注意:过高的抓取频率可能触发 Mercari 风控,建议不低于 10 分钟。
+A: 可以,改 `--loop` 后的分钟数或 `CONFIG.loopMinutes`。注意:过高的抓取频率可能触发 Mercari 风控,当前 10 分钟间隔适中,建议不要低于 5 分钟。
 
 ## 免责声明
 
