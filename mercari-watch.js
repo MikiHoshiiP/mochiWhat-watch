@@ -21,7 +21,9 @@ const CONFIG = {
 };
 
 // ---------- 抓取 ----------
-// 纯 API 直连。dpop 令牌失效(401)时,自动用 Playwright 打开搜索页
+// 优先 API 直连(curl,快)。curl 被风控(403,如 CI 环境)或 dpop 失效时,
+// 回退浏览器模式:Playwright 打开搜索页,拦截页面发出的 API 响应。
+// 两种模式共享同一商品解析逻辑。
 
 async function fetchSearchResults(limit = 0) {
   const opts = {
@@ -32,19 +34,72 @@ async function fetchSearchResults(limit = 0) {
   let items;
   try {
     items = await searchViaApi(CONFIG.keyword, opts); // 仅网络/解析错误抛异常
+    if (items.length > 0) {
+      console.log('[*] 使用 API 直连,共 ' + items.length + ' 件');
+      return limit > 0 ? items.slice(0, limit) : items;
+    }
+    console.warn('[!] API 返回空结果,回退浏览器模式');
   } catch (e) {
-    console.warn('[!] API 调用失败:', e.message);
-    console.log('[*] 尝试刷新 dpop 令牌…');
-    const refreshed = await refreshDpop();
-    if (!refreshed) throw new Error('API 直连失败且令牌刷新失败');
-    items = await searchViaApi(CONFIG.keyword, opts); // 刷新后重试一次
+    console.warn('[!] API 调用失败,回退浏览器模式:', e.message);
   }
-  // 注意:合法空结果(无商品)不走刷新流程,直接返回
+  // 回退:浏览器抓取(拦截页面 API 响应)
+  items = await fetchViaBrowser();
   if (items.length > 0) {
-    console.log('[*] 使用 API 直连,共 ' + items.length + ' 件');
+    console.log('[*] 使用浏览器抓取,共 ' + items.length + ' 件');
     return limit > 0 ? items.slice(0, limit) : items;
   }
+  // 浏览器模式也失败 → 尝试刷新 dpop 后重试 API(仅当 API 失败且是令牌问题时)
+  console.log('[*] 尝试刷新 dpop 令牌…');
+  const refreshed = await refreshDpop();
+  if (refreshed) {
+    items = await searchViaApi(CONFIG.keyword, opts);
+    if (items.length > 0) {
+      console.log('[*] 令牌已刷新,API 重试成功,共 ' + items.length + ' 件');
+      return limit > 0 ? items.slice(0, limit) : items;
+    }
+  }
   return [];
+}
+
+// Playwright 打开搜索页,拦截页面发出的 entities:search 响应并解析商品
+async function fetchViaBrowser() {
+  const channel = process.env.BROWSER_CHANNEL || undefined;
+  let browser = null;
+  try {
+    const proxyServer = process.env.PROXY === 'direct' ? null : (process.env.PROXY || 'http://127.0.0.1:7897');
+    const ctxProxy = proxyServer ? { proxy: { server: proxyServer } } : {};
+    browser = await chromium.launch({ headless: true, channel });
+    const ctx = await browser.newContext({
+      ...ctxProxy,
+      locale: 'ja-JP',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    });
+    const page = await ctx.newPage();
+    let apiJson = null;
+    page.on('response', async (r) => {
+      if (r.url().includes('entities:search') && r.status() === 200 && !apiJson) {
+        try { apiJson = JSON.parse(await r.text()); } catch {}
+      }
+    });
+    const url = 'https://jp.mercari.com/search?keyword=' + encodeURIComponent(CONFIG.keyword) + '&status_on_sale=1';
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: CONFIG.timeout });
+    await page.waitForTimeout(8000); // 等待 API 响应
+    if (!apiJson) return [];
+    return (apiJson.items || []).map((it) => ({
+      id: it.id,
+      title: it.name || '',
+      name: it.name || '',
+      price: parseInt(it.price, 10) || 0,
+      status: it.status || '',
+      created: it.created ? parseInt(it.created, 10) : 0,
+      url: 'https://jp.mercari.com/item/' + it.id,
+    }));
+  } catch (e) {
+    console.error('[!] 浏览器抓取失败:', e.message);
+    return [];
+  } finally {
+    if (browser) await browser.close();
+  }
 }
 
 // 用 Playwright 打开搜索页,捕获 API 请求中的新 dpop 令牌并写入 dpop.json
