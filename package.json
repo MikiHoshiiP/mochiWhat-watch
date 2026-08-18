@@ -1,0 +1,17 @@
+{
+  "name": "mochi",
+  "version": "1.0.0",
+  "description": "",
+  "main": "mercari-watch.js",
+  "scripts": {
+    "watch": "node mercari-watch.js",
+    "watch:loop": "node mercari-watch.js --loop 15"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "playwright": "^1.62.1"
+  }
+}
