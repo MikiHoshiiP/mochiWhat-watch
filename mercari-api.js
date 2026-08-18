@@ -83,6 +83,13 @@ async function searchViaApi(keyword, opts = {}) {
         '--data-binary', '@' + tmp,
       ], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
       const json = JSON.parse(out);
+      // 识别错误响应(401/403 等):curl 无 --fail 时错误响应仍以退出码 0 返回
+      if (!json.items || json.code) {
+        const msg = json.message || json.error || JSON.stringify(json).slice(0, 200);
+        if (json.code === 16) throw new Error('dpop 令牌失效(401),需刷新令牌: ' + msg);
+        if (json.code === 7) throw new Error('API 权限不足(403): ' + msg);
+        throw new Error('API 错误响应: ' + msg);
+      }
       const items = json.items || [];
       all.push(...items);
       token = json.meta?.nextPageToken || '';

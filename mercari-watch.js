@@ -29,33 +29,30 @@ async function fetchSearchResults(limit = 0) {
     pageSize: limit > 0 ? Math.min(limit, 120) : 120,
     maxPages: limit > 0 ? 1 : 4,
   };
+  let items;
   try {
-    const items = await searchViaApi(CONFIG.keyword, opts);
-    if (items.length > 0) {
-      console.log('[*] 使用 API 直连,共 ' + items.length + ' 件');
-      return limit > 0 ? items.slice(0, limit) : items;
-    }
+    items = await searchViaApi(CONFIG.keyword, opts); // 仅网络/解析错误抛异常
   } catch (e) {
     console.warn('[!] API 调用失败:', e.message);
+    console.log('[*] 尝试刷新 dpop 令牌…');
+    const refreshed = await refreshDpop();
+    if (!refreshed) throw new Error('API 直连失败且令牌刷新失败');
+    items = await searchViaApi(CONFIG.keyword, opts); // 刷新后重试一次
   }
-  // API 不可用:自动刷新 dpop 令牌后重试一次
-  console.log('[*] 尝试刷新 dpop 令牌…');
-  const refreshed = await refreshDpop();
-  if (refreshed) {
-    const items = await searchViaApi(CONFIG.keyword, opts);
-    if (items.length > 0) {
-      console.log('[*] 令牌已刷新,API 重试成功,共 ' + items.length + ' 件');
-      return limit > 0 ? items.slice(0, limit) : items;
-    }
+  // 注意:合法空结果(无商品)不走刷新流程,直接返回
+  if (items.length > 0) {
+    console.log('[*] 使用 API 直连,共 ' + items.length + ' 件');
+    return limit > 0 ? items.slice(0, limit) : items;
   }
-  throw new Error('API 直连失败且令牌刷新失败');
+  return [];
 }
 
 // 用 Playwright 打开搜索页,捕获 API 请求中的新 dpop 令牌并写入 dpop.json
 async function refreshDpop() {
   const channel = process.env.BROWSER_CHANNEL || undefined; // 如 "msedge"/"chrome"
-  const browser = await chromium.launch({ headless: true, channel });
+  let browser = null;
   try {
+    browser = await chromium.launch({ headless: true, channel }); // 放 try 内,启动失败按刷新失败处理
     const ctx = await browser.newContext({
       proxy: { server: CONFIG.proxy },
       locale: 'ja-JP',
@@ -78,7 +75,7 @@ async function refreshDpop() {
     console.error('[!] 令牌刷新失败:', e.message);
     return false;
   } finally {
-    await browser.close();
+    if (browser) await browser.close();
   }
 }
 
@@ -93,7 +90,8 @@ const LOG_LIMIT = 1 * 1024 * 1024; // 1MB,超过则轮转
 
 function rotateLog() {
   try {
-    const stat = fs.statSync(LOG_FILE);
+    let stat;
+    try { stat = fs.statSync(LOG_FILE); } catch { return; } // 文件不存在:无需轮转
     if (stat.size <= LOG_LIMIT) return;
     const old = LOG_FILE + '.old';
     fs.rmSync(old, { force: true });
@@ -106,6 +104,7 @@ function rotateLog() {
 // console 输出同步写入 watch.log(瞬时句柄,不阻塞轮转)
 const origLog = console.log;
 const origError = console.error;
+const origWarn = console.warn;
 console.log = (...args) => {
   origLog(...args);
   try { fs.appendFileSync(LOG_FILE, args.join(' ') + '\n'); } catch {}
@@ -114,11 +113,16 @@ console.error = (...args) => {
   origError(...args);
   try { fs.appendFileSync(LOG_FILE, '[ERR] ' + args.join(' ') + '\n'); } catch {}
 };
+console.warn = (...args) => {
+  origWarn(...args);
+  try { fs.appendFileSync(LOG_FILE, '[WARN] ' + args.join(' ') + '\n'); } catch {}
+};
 
 // ---------- 去重 ----------
 
 function loadSeen() {
-  try { return new Set(require(CONFIG.stateFile)); } catch { return new Set(); }
+  // 注意:不能用 require() 读取(有模块缓存,磁盘更新后仍返回旧数据)
+  try { return new Set(JSON.parse(fs.readFileSync(CONFIG.stateFile, 'utf8'))); } catch { return new Set(); }
 }
 function saveSeen(seen) {
   // 原子写入:先写临时文件再重命名,避免中途崩溃损坏 seen.json
@@ -128,13 +132,17 @@ function saveSeen(seen) {
 }
 
 // ---------- 通知 ----------
+// 返回是否至少有一个渠道成功送达。全部失败时返回 false,
+// 调用方不应把商品标记为已通知(否则失败后不会重试)。
 
 const { execFileSync } = require('child_process');
+const FETCH_TIMEOUT_MS = 10000; // 网络推送超时
 
 async function notify(items) {
   // 逐条输出完整信息(价格 + 商品名 + 链接),不截断
   const lines = items.map((i) => `¥${i.price.toLocaleString()} ${i.name || i.title}\n${i.url}`);
   const body = lines.join('\n\n');
+  let delivered = false;
 
   // 1) Windows 桌面通知(推荐,无需配置)
   try {
@@ -145,8 +153,10 @@ async function notify(items) {
     ], {
       env: { ...process.env, TOAST_TITLE: `低价! ¥${items[0].price.toLocaleString()} もちwhat`, TOAST_MESSAGE: message },
       stdio: 'ignore',
+      timeout: 10000, // 防止 PowerShell 卡死
     });
     console.log('[✓] 已发送桌面通知');
+    delivered = true;
   } catch (e) { console.error('[!] 桌面通知失败:', e.message); }
 
   // 2) Server酱 → 微信(配置 SCT_KEY 后启用)。SendKey 在 https://sct.ftqq.com 获取
@@ -157,9 +167,10 @@ async function notify(items) {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ title, desp: body }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), // 超时控制
       });
       const result = await resp.json();
-      if (result.code === 0) console.log('[✓] 已发送 Server酱(微信)通知');
+      if (result.code === 0) { console.log('[✓] 已发送 Server酱(微信)通知'); delivered = true; }
       else console.error('[!] Server酱通知失败:', JSON.stringify(result));
     } catch (e) { console.error('[!] Server酱通知失败:', e.message); }
   }
@@ -167,18 +178,24 @@ async function notify(items) {
   // 3) 企业微信机器人(配置 WECOM_WEBHOOK 后启用),完整列表
   if (process.env.WECOM_WEBHOOK) {
     try {
-      await fetch(process.env.WECOM_WEBHOOK, {
+      const resp = await fetch(process.env.WECOM_WEBHOOK, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ msgtype: 'text', text: { content: body } }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), // 超时控制
       });
-      console.log('[✓] 已发送企业微信通知');
+      const result = await resp.json();
+      // 企业微信成功响应含 errcode: 0;400/限流等为失败
+      if (result.errcode === 0) { console.log('[✓] 已发送企业微信通知'); delivered = true; }
+      else console.error('[!] 企业微信通知失败:', JSON.stringify(result));
     } catch (e) { console.error('[!] 企业微信通知失败:', e.message); }
   }
 
   // 4) 控制台输出(始终),完整列表
   console.log('\n[低价商品 ' + items.length + ' 件]');
   console.log(body);
+
+  return delivered;
 }
 
 // ---------- 主流程 ----------
@@ -200,9 +217,14 @@ async function runOnce() {
 
   if (latest.price < CONFIG.priceLimit && isFresh) {
     console.log(`[*] 最新商品价格 ¥${latest.price.toLocaleString()} < ${CONFIG.priceLimit},通知!`);
-    seen.add(latest.url); // 只有实际通知过才记录,避免降价后无法再次评估
-    saveSeen(seen);
-    await notify([latest]);
+    const delivered = await notify([latest]);
+    if (delivered) {
+      seen.add(latest.url); // 通知成功才记录;失败则下次重试
+      saveSeen(seen);
+      console.log('[*] 通知成功,已记录去重');
+    } else {
+      console.log('[*] 所有通知渠道失败,不记录去重,下轮重试');
+    }
   } else if (!isFresh) {
     console.log('[*] 该商品已通知过,跳过');
   } else {
@@ -214,7 +236,10 @@ async function main() {
   const args = process.argv.slice(2);
   if (args.includes('--loop')) {
     const idx = args.indexOf('--loop');
-    const minutes = parseInt(args[idx + 1], 10) || CONFIG.loopMinutes;
+    const raw = parseInt(args[idx + 1], 10);
+    // 校验:正数且 ≤ 1440(24h)。负/NaN/超大回退默认。
+    // 极大值会超出 setTimeout 上限(约 24.8 天),被压缩为 ~1ms 连续请求。
+    const minutes = Number.isFinite(raw) && raw >= 1 && raw <= 1440 ? raw : CONFIG.loopMinutes;
     console.log(`[*] 循环模式:每 ${minutes} 分钟检查一次`);
     while (true) {
       rotateLog(); // 每次循环前检查日志大小
