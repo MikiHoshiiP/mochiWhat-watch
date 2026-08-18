@@ -33,7 +33,8 @@
 ### 安装
 
 ```bash
-cd D:\Code\mochi
+git clone <仓库地址>
+cd mochi
 npm install
 ```
 
@@ -47,11 +48,18 @@ npm install
 | `node mercari-watch.js --loop 1` | 每 1 分钟检查一次(数字可改) |
 | `npm run watch` | 单次检查 |
 | `npm run watch:loop` | 每 1 分钟循环 |
-| `watch.bat` | 循环运行,日志写入 `watch.log`(推荐) |
+| `watch.bat.example` | 循环启动脚本模板(复制为 `watch.bat` 后使用) |
 
-### 开机自动运行(已配置)
+### 开机自动运行(Windows)
 
-`watch.bat` 已复制到 Windows 启动文件夹(`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\MercariWatch.bat`),登录后自动开始监控。取消自启:删除该文件即可。
+```bash
+copy watch.bat.example watch.bat
+# 编辑 watch.bat,把 SCT_KEY=你的SendKey 替换为真实 SendKey
+# 然后复制到启动文件夹:
+copy watch.bat "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\MercariWatch.bat"
+```
+
+登录后自动开始监控。取消自启:删除启动文件夹里的 `MercariWatch.bat` 即可。
 
 ## 配置
 
@@ -86,8 +94,8 @@ const CONFIG = {
 set SCT_KEY=你的SendKey
 node mercari-watch.js --loop 1
 
-# 方式二:写入 watch.bat(开机自启也生效)
-#   编辑 watch.bat,把 SCT_KEY=你的SendKey 替换成真实 SendKey
+# 方式二:写入启动脚本(开机自启也生效)
+#   编辑 watch.bat(由 watch.bat.example 复制而来),把 SCT_KEY=你的SendKey 替换成真实 SendKey
 ```
 
 设置后,抓到低价商品会同时弹桌面通知 + 推送微信「服务通知」。
@@ -108,7 +116,7 @@ mochi/
 ├── mercari-watch.js   # 主程序:抓取 → 筛选 → 去重 → 通知
 ├── mercari-api.js     # API 直连模块(dpop 令牌、分页、在售过滤)
 ├── toast.ps1          # Windows 桌面通知(PowerShell)
-├── watch.bat          # 循环启动脚本(每 1 分钟)
+├── watch.bat.example  # 循环启动脚本模板(复制为 watch.bat 使用,含 SendKey 占位符)
 ├── package.json       # 依赖(playwright)
 ├── dpop.json          # API 令牌(自动生成,勿手动编辑;gitignore)
 ├── seen.json          # 已通知商品记录(自动生成,勿手动编辑)

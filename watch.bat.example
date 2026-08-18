@@ -1,0 +1,5 @@
+@echo off
+cd /d %~dp0
+set BROWSER_CHANNEL=msedge
+set SCT_KEY=你的SendKey
+node mercari-watch.js --loop 1
