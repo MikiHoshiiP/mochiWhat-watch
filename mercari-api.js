@@ -1,0 +1,109 @@
+/**
+ * Mercari 搜索 API 直连模块
+ *
+ * 原理:页面 jp.mercari.com/search 会向后端 API 发 POST
+ *   https://api.mercari.jp/v2/entities:search
+ * 带上 dpop(DPoP JWT) 令牌即可直接调用,无需启动浏览器。
+ * 单次请求约 0.5~1 秒,可拿全量商品(浏览器只渲染首屏)。
+ *
+ * dpop 令牌由 get-dpop.js 从真实浏览器会话捕获,存于 dpop.json。
+ * 令牌复用有效(实测连续调用无限制),若失效返回 401 则需重新捕获。
+ */
+const { execFileSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+const DPOP_FILE = path.join(__dirname, 'dpop.json');
+const PROXY = process.env.PROXY || 'http://127.0.0.1:7897';
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
+function loadDpop() {
+  try { return JSON.parse(fs.readFileSync(DPOP_FILE, 'utf8')).dpop; } catch { return null; }
+}
+
+/**
+ * 直连搜索 API。
+ * @param {string} keyword 搜索关键词
+ * @param {object} opts { sort: 'SORT_CREATED_TIME'|'SORT_SCORE', pageSize, pageToken, maxPages }
+ * @returns {Promise<Array>} 商品数组 [{ id, name, price, status, created, url, soldOut }]
+ */
+async function searchViaApi(keyword, opts = {}) {
+  const {
+    sort = 'SORT_CREATED_TIME',        // 新着順
+    pageSize = 120,
+    pageToken = '',
+    maxPages = 3,
+  } = opts;
+  const dpop = loadDpop();
+  if (!dpop) throw new Error('dpop.json 缺失,请先运行 node get-dpop.js 捕获令牌');
+
+  const payload = {
+    userId: '',
+    config: { responseToggles: ['QUERY_SUGGESTION_WEB_1'] },
+    pageSize, pageToken,
+    searchSessionId: 'watch-' + Date.now(),
+    source: 'BaseSerp',
+    indexRouting: 'INDEX_ROUTING_UNSPECIFIED',
+    thumbnailTypes: [],
+    searchCondition: {
+      keyword, excludeKeyword: '', sort, order: 'ORDER_DESC',
+      status: ['STATUS_ON_SALE'],   // 只在售(实测有效枚举值)
+      sizeId: [], categoryId: [], brandId: [], sellerId: [],
+      priceMin: 0, priceMax: 0, itemConditionId: [], shippingPayerId: [],
+      shippingFromArea: [], shippingMethod: [], colorId: [], hasCoupon: false,
+      attributes: [], itemTypes: [], skuIds: [], shopIds: [], excludeShippingMethodIds: [],
+    },
+    serviceFrom: 'suruga', withItemBrand: true, withItemSize: false,
+    withItemPromotions: true, withItemSizes: true, withShopname: false,
+    useDynamicAttribute: true, withSuggestedItems: true, withOfferPricePromotion: true,
+    withProductSuggest: true, withParentProducts: false, withProductArticles: true,
+    withSearchConditionId: false, withAuction: true,
+    laplaceDeviceUuid: '',
+  };
+
+  const tmp = path.join(require('os').tmpdir(), 'mercari-api-' + process.pid + '.json');
+  const all = [];
+  let token = pageToken;
+
+  for (let page = 0; page < maxPages; page++) {
+    payload.pageToken = token;
+    fs.writeFileSync(tmp, JSON.stringify(payload));
+    try {
+      const out = execFileSync('curl', [
+        '-s', '-m', '20', '-x', PROXY, '-X', 'POST',
+        'https://api.mercari.jp/v2/entities:search',
+        '-H', 'Content-Type: application/json',
+        '-H', 'x-platform: web',
+        '-H', 'referer: https://jp.mercari.com/',
+        '-H', 'accept-language: ja',
+        '-H', 'x-country-code: JP',
+        '-H', 'dpop: ' + dpop,
+        '-H', 'user-agent: ' + UA,
+        '-H', 'accept: application/json, text/plain, */*',
+        '--data-binary', '@' + tmp,
+      ], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+      const json = JSON.parse(out);
+      const items = json.items || [];
+      all.push(...items);
+      token = json.meta?.nextPageToken || '';
+      if (!token || items.length === 0) break;
+    } catch (e) {
+      fs.rmSync(tmp, { force: true });
+      throw new Error('API 调用失败(第 ' + (page + 1) + ' 页): ' + e.message);
+    }
+  }
+  fs.rmSync(tmp, { force: true });
+
+  return all.map((it) => ({
+    id: it.id,
+    title: it.name || '',
+    name: it.name || '',
+    price: parseInt(it.price, 10) || 0,
+    status: it.status || '',
+    soldOut: it.status !== 'ITEM_STATUS_ON_SALE',
+    created: it.created ? parseInt(it.created, 10) : 0,
+    url: 'https://jp.mercari.com/item/' + it.id,
+  }));
+}
+
+module.exports = { searchViaApi };

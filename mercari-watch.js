@@ -1,13 +1,17 @@
 /**
  * もちwhat Mercari 低价监控
- * 访问 jp.mercari.com 搜索页(通过本地代理),抓取在售商品,
- * 筛选价格低于阈值的商品并通知。只通知新出现(未通知过)的低价商品。
+ * 只看「最新上架的一件商品」:新着順第一件,当价格低于阈值时通知。
+ * 同一商品只通知一次;未通知过的高价商品会持续评估(降价后触发)。
+ * 默认直连 Mercari 搜索 API(约 0.5~1 秒/次);令牌失效时回退浏览器渲染。
  *
  * 用法:
- *   node mercari-watch.js            # 单次抓取并通知
+ *   node mercari-watch.js            # 单次检查并通知
  *   node mercari-watch.js --loop N   # 每 N 分钟循环一次
+ *   node get-dpop.js                 # 重新捕获 API 令牌(dpop.json)
+ *   USE_API=0 node mercari-watch.js  # 强制浏览器模式
  */
 const { chromium } = require('playwright');
+const { searchViaApi } = require('./mercari-api');
 
 const CONFIG = {
   keyword: 'もちwhat',
@@ -19,8 +23,30 @@ const CONFIG = {
 };
 
 // ---------- 抓取 ----------
+// 主路径:直连搜索 API(约 0.5~1 秒,可拿全量商品)。dpop.json 缺失或
+// API 返回 401(dpop 过期)时,回退到浏览器渲染模式。USE_API=0 强制浏览器。
 
-async function fetchSearchResults() {
+async function fetchSearchResults(limit = 0) {
+  if (process.env.USE_API !== '0') {
+    try {
+      const items = await searchViaApi(CONFIG.keyword, {
+        sort: 'SORT_CREATED_TIME',
+        pageSize: limit > 0 ? Math.min(limit, 120) : 120,
+        maxPages: limit > 0 ? 1 : 4,
+      });
+      if (items.length > 0) {
+        console.log('[*] 使用 API 直连,共 ' + items.length + ' 件');
+        return limit > 0 ? items.slice(0, limit) : items;
+      }
+    } catch (e) {
+      console.warn('[!] API 直连失败,回退浏览器模式:', e.message);
+    }
+  }
+  const items = await fetchViaBrowser();
+  return limit > 0 ? items.slice(0, limit) : items;
+}
+
+async function fetchViaBrowser() {
   const channel = process.env.BROWSER_CHANNEL || undefined; // 如 "msedge"/"chrome"
   const browser = await chromium.launch({ headless: true, channel });
   try {
@@ -129,7 +155,7 @@ async function notify(items) {
       '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
       __dirname + '/toast.ps1',
     ], {
-      env: { ...process.env, TOAST_TITLE: `低价! ${items.length} 件もちwhat`, TOAST_MESSAGE: message },
+      env: { ...process.env, TOAST_TITLE: `低价! ¥${items[0].price.toLocaleString()} もちwhat`, TOAST_MESSAGE: message },
       stdio: 'ignore',
     });
     console.log('[✓] 已发送桌面通知');
@@ -138,7 +164,7 @@ async function notify(items) {
   // 2) Server酱 → 微信(配置 SCT_KEY 后启用)。SendKey 在 https://sct.ftqq.com 获取
   if (process.env.SCT_KEY) {
     try {
-      const title = `低价! ${items.length} 件もちwhat`;
+      const title = `低价! ¥${items[0].price.toLocaleString()} もちwhat`;
       const resp = await fetch(`https://sctapi.ftqq.com/${process.env.SCT_KEY}.send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -168,19 +194,32 @@ async function notify(items) {
 }
 
 // ---------- 主流程 ----------
+// 需求:只看「最新上架的一件」商品,当它低于价格阈值时通知。
+// 新着順下第一件即为最新;同一商品只通知一次(seen.json 去重)。
 
 async function runOnce() {
-  const items = await fetchSearchResults();
-  console.log(`[*] 共抓到 ${items.length} 件在售商品`);
+  // 只取前几件即可(新着順第一件就是最新商品)
+  const items = await fetchSearchResults(5);
+  if (items.length === 0) {
+    console.log('[*] 未抓到商品');
+    return;
+  }
+  const latest = items[0]; // 最新上架的商品
+  console.log(`[*] 最新商品:${latest.title} ¥${latest.price.toLocaleString()} (共${items.length}件在售)`);
 
-  const cheap = items.filter((i) => i.price < CONFIG.priceLimit);
   const seen = loadSeen();
-  const fresh = cheap.filter((i) => !seen.has(i.url));
-  fresh.forEach((i) => seen.add(i.url));
-  saveSeen(seen);
+  const isFresh = !seen.has(latest.url); // 未通知过
 
-  console.log(`[*] 低价 ${cheap.length} 件,新出现 ${fresh.length} 件`);
-  if (fresh.length > 0) await notify(fresh);
+  if (latest.price < CONFIG.priceLimit && isFresh) {
+    console.log(`[*] 最新商品价格 ¥${latest.price.toLocaleString()} < ${CONFIG.priceLimit},通知!`);
+    seen.add(latest.url); // 只有实际通知过才记录,避免降价后无法再次评估
+    saveSeen(seen);
+    await notify([latest]);
+  } else if (!isFresh) {
+    console.log('[*] 该商品已通知过,跳过');
+  } else {
+    console.log(`[*] 最新商品价格 ¥${latest.price.toLocaleString()} >= ${CONFIG.priceLimit},不通知(降价后会再次评估)`);
+  }
 }
 
 async function main() {
