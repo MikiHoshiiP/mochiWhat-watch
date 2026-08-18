@@ -76,14 +76,28 @@ async function fetchViaBrowser() {
     });
     const page = await ctx.newPage();
     let apiJson = null;
+    // 只拦截「新着順」的 API 响应:页面默认是推荐排序(SORT_SCORE),
+    // 切换排序后才会发出 sort=SORT_CREATED_TIME 的请求
     page.on('response', async (r) => {
       if (r.url().includes('entities:search') && r.status() === 200 && !apiJson) {
-        try { apiJson = JSON.parse(await r.text()); } catch {}
+        try {
+          const pd = r.request().postData() || '';
+          if (pd.includes('SORT_CREATED_TIME')) apiJson = JSON.parse(await r.text());
+        } catch {}
       }
     });
     const url = 'https://jp.mercari.com/search?keyword=' + encodeURIComponent(CONFIG.keyword) + '&status_on_sale=1';
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: CONFIG.timeout });
-    await page.waitForTimeout(8000); // 等待 API 响应
+    // 切换到「新しい順」(新着順),触发带 SORT_CREATED_TIME 的 API 请求。
+    // 注意:headless 下 selectOption 偶尔不触发 React 状态更新,需重试。
+    const sortSel = page.locator('select[name="sortOrder"]');
+    await page.waitForSelector('select[name="sortOrder"]', { timeout: CONFIG.timeout });
+    for (let attempt = 0; attempt < 3 && !apiJson; attempt++) {
+      await sortSel.selectOption('created_time:desc');
+      // 等待新着順响应(轮询最多 10 秒)
+      for (let i = 0; i < 10 && !apiJson; i++) await page.waitForTimeout(1000);
+      if (!apiJson && attempt < 2) console.warn('[*] 排序切换未触发新着順请求,重试…');
+    }
     if (!apiJson) return [];
     return (apiJson.items || []).map((it) => ({
       id: it.id,
