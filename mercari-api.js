@@ -14,10 +14,14 @@ const fs = require('fs');
 const path = require('path');
 
 const DPOP_FILE = path.join(__dirname, 'dpop.json');
-const PROXY = process.env.PROXY || 'http://127.0.0.1:7897';
+// 代理:未设置时默认本地 Clash(127.0.0.1:7897);
+// 设为 'direct' 时不走代理(如 GitHub Actions / 海外服务器直连)
+const PROXY = process.env.PROXY === 'direct' ? null : (process.env.PROXY || 'http://127.0.0.1:7897');
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
 function loadDpop() {
+  // Secret 注入优先(CI 环境);否则读本地 dpop.json(开发机)
+  if (process.env.DPOP) return process.env.DPOP;
   try { return JSON.parse(fs.readFileSync(DPOP_FILE, 'utf8')).dpop; } catch { return null; }
 }
 
@@ -69,8 +73,8 @@ async function searchViaApi(keyword, opts = {}) {
     payload.pageToken = token;
     fs.writeFileSync(tmp, JSON.stringify(payload));
     try {
-      const out = execFileSync('curl', [
-        '-s', '-m', '20', '-x', PROXY, '-X', 'POST',
+      const args = [
+        '-s', '-m', '20', '-X', 'POST',
         'https://api.mercari.jp/v2/entities:search',
         '-H', 'Content-Type: application/json',
         '-H', 'x-platform: web',
@@ -81,7 +85,9 @@ async function searchViaApi(keyword, opts = {}) {
         '-H', 'user-agent: ' + UA,
         '-H', 'accept: application/json, text/plain, */*',
         '--data-binary', '@' + tmp,
-      ], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+      ];
+      if (PROXY) args.splice(1, 0, '-x', PROXY); // 有代理才传 -x(直连模式不传)
+      const out = execFileSync('curl', args, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
       const json = JSON.parse(out);
       // 识别错误响应(401/403 等):curl 无 --fail 时错误响应仍以退出码 0 返回
       if (!json.items || json.code) {

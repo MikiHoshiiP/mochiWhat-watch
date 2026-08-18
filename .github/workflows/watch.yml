@@ -5,6 +5,16 @@ on:
     - cron: '*/5 * * * *'   # 每 5 分钟
   workflow_dispatch:        # 手动触发
 
+# 需要写权限以持久化 seen.json(去重状态)
+permissions:
+  contents: write
+
+# 并发控制:同一仓库同时只跑一个 run。cancel-in-progress 必须为 false:
+# 若取消仍在执行的任务,可能已发出通知但未持久化 seen.json,导致重复通知。
+concurrency:
+  group: mercari-watch
+  cancel-in-progress: false
+
 jobs:
   watch:
     runs-on: ubuntu-latest
@@ -17,17 +27,42 @@ jobs:
 
       - run: npm install
 
-      # SCT_KEY 从 Secrets 注入;dpop 令牌在仓库内 dpop.json
+      # Playwright 浏览器仅用于 dpop 失效时刷新令牌;缓存安装避免每轮重新下载
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}
+      - run: npx playwright install --with-deps chromium || true
+
+      # 校验至少一个远程通知渠道已配置(CI 无桌面通知,缺 SCT_KEY 则全程假成功)
+      - name: Verify notification secret
+        env:
+          SCT_KEY: ${{ secrets.SCT_KEY }}
+        run: |
+          if [ -z "$SCT_KEY" ]; then
+            echo "::error::SCT_KEY secret not configured. Add it in repo Settings → Secrets."
+            exit 1
+          fi
+          echo "SCT_KEY configured ✓"
+
+      # PROXY=direct 直连;SCT_KEY/DPOP 从 Secrets 注入
       - name: Run watch
         env:
           SCT_KEY: ${{ secrets.SCT_KEY }}
+          DPOP: ${{ secrets.DPOP }}
+          PROXY: direct
         run: node mercari-watch.js
 
-      # 去重状态持久化:把 seen.json 的变化提交回仓库(下次 run 继续去重)
+      # 去重状态持久化:把 seen.json 的变化提交回仓库(下次 run 继续去重)。
+      # seen.json 已在 .gitignore,须用 -f 强制 add。
       - name: Persist seen state
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add seen.json
-          git diff --cached --quiet || git commit -m "chore: update seen state [skip ci]"
-          git push
+          if [ -f seen.json ] && [ -s seen.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add -f seen.json
+            git diff --cached --quiet || git commit -m "chore: update seen state [skip ci]"
+            git push
+          else
+            echo "seen.json 不存在或为空,跳过持久化"
+          fi

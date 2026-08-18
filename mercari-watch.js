@@ -52,9 +52,12 @@ async function refreshDpop() {
   const channel = process.env.BROWSER_CHANNEL || undefined; // 如 "msedge"/"chrome"
   let browser = null;
   try {
+    // 代理:PROXY=direct 时不配置(CI/海外直连);未设置默认走本地 Clash
+    const proxyServer = process.env.PROXY === 'direct' ? null : (process.env.PROXY || 'http://127.0.0.1:7897');
+    const ctxProxy = proxyServer ? { proxy: { server: proxyServer } } : {};
     browser = await chromium.launch({ headless: true, channel }); // 放 try 内,启动失败按刷新失败处理
     const ctx = await browser.newContext({
-      proxy: { server: CONFIG.proxy },
+      ...ctxProxy,
       locale: 'ja-JP',
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
     });
@@ -68,6 +71,7 @@ async function refreshDpop() {
     await page.waitForTimeout(8000); // 等待 API 请求发出
     if (dpop) {
       fs.writeFileSync(__dirname + '/dpop.json', JSON.stringify({ captured: Date.now(), dpop }));
+      process.env.DPOP = dpop; // 同步更新环境变量,刷新后重试直接使用新令牌
       return true;
     }
     return false;
@@ -270,6 +274,8 @@ async function runOnce() {
       console.log('[*] 通知成功,已记录去重');
     } else {
       console.log('[*] 所有通知渠道失败,不记录去重,下轮重试');
+      // 全部通知渠道失败属于监控故障:单次模式(CI)下以非零退出码暴露
+      if (!process.argv.includes('--loop')) process.exitCode = 1;
     }
   } else if (!isFresh) {
     console.log('[*] 该商品已通知过,跳过');
@@ -304,7 +310,14 @@ async function main() {
       await new Promise((r) => setTimeout(r, minutes * 60 * 1000));
     }
   } else {
-    await runOnce();
+    // 单次模式(如 CI):失败也发告警,便于发现静默故障
+    try {
+      await runOnce();
+    } catch (e) {
+      console.error('[!] 抓取失败:', e.message);
+      await sendAlert(`监控抓取失败:\n${e.message}`);
+      process.exitCode = 1;
+    }
   }
 }
 
