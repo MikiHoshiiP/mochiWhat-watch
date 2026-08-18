@@ -1,0 +1,15 @@
+name: Mercari Diag PW
+on:
+  workflow_dispatch:
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npx playwright install --with-deps chromium || true
+      - name: Playwright diagnostic
+        run: node diag-pw.js
