@@ -1,0 +1,33 @@
+name: Mercari Watch
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'   # 每 5 分钟
+  workflow_dispatch:        # 手动触发
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm install
+
+      # SCT_KEY 从 Secrets 注入;dpop 令牌在仓库内 dpop.json
+      - name: Run watch
+        env:
+          SCT_KEY: ${{ secrets.SCT_KEY }}
+        run: node mercari-watch.js
+
+      # 去重状态持久化:把 seen.json 的变化提交回仓库(下次 run 继续去重)
+      - name: Persist seen state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add seen.json
+          git diff --cached --quiet || git commit -m "chore: update seen state [skip ci]"
+          git push

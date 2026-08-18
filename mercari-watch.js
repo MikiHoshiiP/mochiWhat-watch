@@ -101,21 +101,22 @@ function rotateLog() {
   } catch (e) { console.error('[!] 日志轮转失败:', e.message); }
 }
 
-// console 输出同步写入 watch.log(瞬时句柄,不阻塞轮转)
+// console 输出同步写入 watch.log(瞬时句柄,不阻塞轮转)。带时间戳便于排查。
 const origLog = console.log;
 const origError = console.error;
 const origWarn = console.warn;
+const ts = () => '[' + new Date().toLocaleString('zh-CN', { hour12: false }) + '] ';
 console.log = (...args) => {
   origLog(...args);
-  try { fs.appendFileSync(LOG_FILE, args.join(' ') + '\n'); } catch {}
+  try { fs.appendFileSync(LOG_FILE, ts() + args.join(' ') + '\n'); } catch {}
 };
 console.error = (...args) => {
   origError(...args);
-  try { fs.appendFileSync(LOG_FILE, '[ERR] ' + args.join(' ') + '\n'); } catch {}
+  try { fs.appendFileSync(LOG_FILE, ts() + '[ERR] ' + args.join(' ') + '\n'); } catch {}
 };
 console.warn = (...args) => {
   origWarn(...args);
-  try { fs.appendFileSync(LOG_FILE, '[WARN] ' + args.join(' ') + '\n'); } catch {}
+  try { fs.appendFileSync(LOG_FILE, ts() + '[WARN] ' + args.join(' ') + '\n'); } catch {}
 };
 
 // ---------- 去重 ----------
@@ -144,20 +145,24 @@ async function notify(items) {
   const body = lines.join('\n\n');
   let delivered = false;
 
-  // 1) Windows 桌面通知(推荐,无需配置)
-  try {
-    const message = lines.slice(0, 5).join('\n'); // toast 只显示前 5 条,避免过长
-    execFileSync('powershell', [
-      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-      __dirname + '/toast.ps1',
-    ], {
-      env: { ...process.env, TOAST_TITLE: `低价! ¥${items[0].price.toLocaleString()} もちwhat`, TOAST_MESSAGE: message },
-      stdio: 'ignore',
-      timeout: 10000, // 防止 PowerShell 卡死
-    });
-    console.log('[✓] 已发送桌面通知');
-    delivered = true;
-  } catch (e) { console.error('[!] 桌面通知失败:', e.message); }
+  // 1) Windows 桌面通知(仅 Windows 平台;服务器/Linux 自动跳过)
+  if (process.platform === 'win32') {
+    try {
+      const message = lines.slice(0, 5).join('\n'); // toast 只显示前 5 条,避免过长
+      execFileSync('powershell', [
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+        __dirname + '/toast.ps1',
+      ], {
+        env: { ...process.env, TOAST_TITLE: `低价! ¥${items[0].price.toLocaleString()} もちwhat`, TOAST_MESSAGE: message },
+        stdio: 'ignore',
+        timeout: 10000, // 防止 PowerShell 卡死
+      });
+      console.log('[✓] 已发送桌面通知');
+      delivered = true;
+    } catch (e) { console.error('[!] 桌面通知失败:', e.message); }
+  } else {
+    console.log('[*] 非 Windows 平台,跳过桌面通知');
+  }
 
   // 2) Server酱 → 微信(配置 SCT_KEY 后启用)。SendKey 在 https://sct.ftqq.com 获取
   if (process.env.SCT_KEY) {
@@ -196,6 +201,47 @@ async function notify(items) {
   console.log(body);
 
   return delivered;
+}
+
+// ---------- 告警 ----------
+// 监控异常时推送(连续失败等)。与 notify 分离:不改变商品去重语义。
+// 渠道:桌面 toast(如有 SCT_KEY) + Server酱。告警限频:同一级别至少隔 30 分钟。
+
+let lastAlertAt = 0;
+const ALERT_MIN_INTERVAL = 30 * 60 * 1000; // 30 分钟
+
+async function sendAlert(message) {
+  const now = Date.now();
+  if (now - lastAlertAt < ALERT_MIN_INTERVAL) return; // 限频
+  lastAlertAt = now;
+  if (process.platform === 'win32') {
+    try {
+      const msg = message.slice(0, 300);
+      execFileSync('powershell', [
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+        __dirname + '/toast.ps1',
+      ], {
+        env: { ...process.env, TOAST_TITLE: '⚠️ もちwhat 监控异常', TOAST_MESSAGE: msg },
+        stdio: 'ignore',
+        timeout: 10000,
+      });
+      console.log('[✓] 已发送异常桌面通知');
+    } catch (e) { console.error('[!] 异常桌面通知失败:', e.message); }
+  }
+
+  if (process.env.SCT_KEY) {
+    try {
+      const resp = await fetch(`https://sctapi.ftqq.com/${process.env.SCT_KEY}.send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ title: '⚠️ もちwhat 监控异常', desp: message }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const result = await resp.json();
+      if (result.code === 0) console.log('[✓] 已发送异常微信通知');
+      else console.error('[!] 异常微信通知失败:', JSON.stringify(result));
+    } catch (e) { console.error('[!] 异常微信通知失败:', e.message); }
+  }
 }
 
 // ---------- 主流程 ----------
@@ -241,9 +287,20 @@ async function main() {
     // 极大值会超出 setTimeout 上限(约 24.8 天),被压缩为 ~1ms 连续请求。
     const minutes = Number.isFinite(raw) && raw >= 1 && raw <= 1440 ? raw : CONFIG.loopMinutes;
     console.log(`[*] 循环模式:每 ${minutes} 分钟检查一次`);
+    let consecutiveFailures = 0; // 连续失败计数(可靠性告警)
     while (true) {
       rotateLog(); // 每次循环前检查日志大小
-      try { await runOnce(); } catch (e) { console.error('[!] 本次抓取失败:', e.message); }
+      try {
+        await runOnce();
+        consecutiveFailures = 0; // 成功即重置
+      } catch (e) {
+        consecutiveFailures++;
+        console.error(`[!] 本次抓取失败(连续 ${consecutiveFailures} 次):`, e.message);
+        // 连续失败 ≥ 3 次推送告警(限频 30 分钟),避免静默故障
+        if (consecutiveFailures >= 3) {
+          await sendAlert(`监控连续 ${consecutiveFailures} 次抓取失败,请检查代理/网络。\n最近错误:${e.message}`);
+        }
+      }
       await new Promise((r) => setTimeout(r, minutes * 60 * 1000));
     }
   } else {
