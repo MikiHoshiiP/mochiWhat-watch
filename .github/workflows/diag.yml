@@ -1,0 +1,16 @@
+name: Mercari Diag
+on:
+  workflow_dispatch:
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          echo "=== 1. 直连 API(无 dpop)==="
+          curl -s -m 10 -X POST https://api.mercari.jp/v2/entities:search \
+            -H "Content-Type: application/json" -H "x-platform: web" \
+            -d '{"userId":"","config":{"responseToggles":[]},"pageSize":3,"pageToken":"","searchSessionId":"diag","source":"BaseSerp","indexRouting":"INDEX_ROUTING_UNSPECIFIED","thumbnailTypes":[],"searchCondition":{"keyword":"test","excludeKeyword":"","sort":"SORT_CREATED_TIME","order":"ORDER_DESC","status":["STATUS_ON_SALE"],"sizeId":[],"categoryId":[],"brandId":[],"sellerId":[],"priceMin":0,"priceMax":0,"itemConditionId":[],"shippingPayerId":[],"shippingFromArea":[],"shippingMethod":[],"colorId":[],"hasCoupon":false,"attributes":[],"itemTypes":[],"skuIds":[],"shopIds":[],"excludeShippingMethodIds":[]},"serviceFrom":"suruga","withItemBrand":true,"withItemSize":false,"withItemPromotions":true,"withItemSizes":true,"withShopname":false,"useDynamicAttribute":true,"withSuggestedItems":true,"withOfferPricePromotion":true,"withProductSuggest":true,"withParentProducts":false,"withProductArticles":true,"withSearchConditionId":false,"withAuction":true,"laplaceDeviceUuid":""}' -w "\nHTTP %{http_code}\n"
+          echo "=== 2. 页面访问 ==="
+          curl -s -m 10 -o /dev/null -w "jp.mercari.com: %{http_code}\n" "https://jp.mercari.com/search?keyword=test"
+          curl -s -m 10 -o /dev/null -w "api.mercari.jp: %{http_code}\n" "https://api.mercari.jp/v2/entities:search"

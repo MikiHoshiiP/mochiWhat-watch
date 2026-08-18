@@ -88,13 +88,15 @@ async function searchViaApi(keyword, opts = {}) {
       ];
       if (PROXY) args.splice(1, 0, '-x', PROXY); // 有代理才传 -x(直连模式不传)
       const out = execFileSync('curl', args, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
-      const json = JSON.parse(out);
-      // 识别错误响应(401/403 等):curl 无 --fail 时错误响应仍以退出码 0 返回
-      if (!json.items || json.code) {
-        const msg = json.message || json.error || JSON.stringify(json).slice(0, 200);
-        if (json.code === 16) throw new Error('dpop 令牌失效(401),需刷新令牌: ' + msg);
-        if (json.code === 7) throw new Error('API 权限不足(403): ' + msg);
-        throw new Error('API 错误响应: ' + msg);
+      // 识别错误响应:非 JSON(如 "Forbidden" 纯文本)或 JSON 错误码都按失败处理
+      let json = null;
+      try { json = JSON.parse(out); } catch { /* 非 JSON,下面按错误响应处理 */ }
+      if (!json || !json.items || json.code) {
+        const raw = out.trim().slice(0, 200);
+        const msg = json ? (json.message || json.error || raw) : raw;
+        if (json && json.code === 16) throw new Error('dpop 令牌失效(401),需刷新令牌: ' + msg);
+        if (json && json.code === 7) throw new Error('API 权限不足(403): ' + msg);
+        throw new Error('API 错误响应(' + (json ? 'json' : 'text') + '): ' + msg);
       }
       const items = json.items || [];
       all.push(...items);
