@@ -21,7 +21,7 @@
                                             Windows 桌面通知 + 微信(Server酱)/ 日志
 ```
 
-> 直接调用 Mercari 搜索 API(`api.mercari.jp/v2/entities:search`),单次约 0.5~1 秒、可拿全量商品,比浏览器渲染(约 25 秒、仅首屏)快一个数量级。API 需携带 `dpop` 令牌,由 `node get-dpop.js` 从浏览器会话捕获(已生成 `dpop.json`,令牌可长期复用;若失效重新捕获即可)。API 不可用时自动回退浏览器模式。
+> 直接调用 Mercari 搜索 API(`api.mercari.jp/v2/entities:search`),单次约 0.5~1 秒、可拿全量商品。API 需携带 `dpop` 令牌(存于 `dpop.json`,可长期复用);**令牌失效时自动用 Playwright 打开搜索页捕获新令牌并重试**,无需人工干预。
 
 ## 快速开始
 
@@ -35,8 +35,9 @@
 ```bash
 cd D:\Code\mochi
 npm install
-npx playwright install chromium-headless-shell
 ```
+
+> Playwright 仅在 `dpop` 令牌失效时用于自动刷新令牌(走系统 Edge),日常运行不启动浏览器。
 
 ### 使用
 
@@ -116,11 +117,11 @@ mochi/
 
 ## 常见问题
 
-**Q: 运行报错 `Executable doesn't exist`**
-A: 缺少无头浏览器,执行 `npx playwright install chromium-headless-shell`。仅浏览器回退模式需要,API 模式无需浏览器。
+**Q: 自动刷新令牌时报错 `Executable doesn't exist`**
+A: 令牌刷新使用系统 Edge,确认已安装;或设置 `BROWSER_CHANNEL=chrome`(如有 Chrome)使用其他浏览器。
 
-**Q: API 返回 401 / 抓取失败(回退浏览器)**
-A: `dpop` 令牌失效。执行 `node get-dpop.js` 重新捕获令牌(会生成新的 `dpop.json`)。
+**Q: API 返回 401 / 抓取失败**
+A: `dpop` 令牌失效。脚本会自动刷新令牌(用 Playwright 打开搜索页捕获新的 `dpop.json`)并重试,无需手动操作。若自动刷新也失败,检查代理或 Edge 浏览器是否可用。
 
 **Q: 抓取 0 件商品**
 A: 检查代理是否开启、`CONFIG.proxy` 端口是否与 Clash 一致。
@@ -132,7 +133,7 @@ A: 删除 `seen.json`,下次运行会重新通知所有当前低价商品。
 A: 不会。每个商品 URL 记录在 `seen.json`,仅首次出现时通知(原子写入,防止崩溃损坏)。
 
 **Q: 监控频率可以更快吗**
-A: API 模式单次约 1 秒,当前默认 1 分钟轮询,已接近实时。不建议低于 1 分钟(可能触发 Mercari 风控)。浏览器模式较慢(约 25 秒),只作为 API 失效时的回退。
+A: API 模式单次约 1 秒,当前默认 1 分钟轮询,已接近实时。不建议低于 1 分钟(可能触发 Mercari 风控)。
 
 ## 免责声明
 

@@ -2,13 +2,11 @@
  * もちwhat Mercari 低价监控
  * 只看「最新上架的一件商品」:新着順第一件,当价格低于阈值时通知。
  * 同一商品只通知一次;未通知过的高价商品会持续评估(降价后触发)。
- * 默认直连 Mercari 搜索 API(约 0.5~1 秒/次);令牌失效时回退浏览器渲染。
+ * 纯 API 直连(约 0.5~1 秒/次);dpop 令牌失效时自动刷新并重试。
  *
  * 用法:
  *   node mercari-watch.js            # 单次检查并通知
  *   node mercari-watch.js --loop N   # 每 N 分钟循环一次
- *   node get-dpop.js                 # 重新捕获 API 令牌(dpop.json)
- *   USE_API=0 node mercari-watch.js  # 强制浏览器模式
  */
 const { chromium } = require('playwright');
 const { searchViaApi } = require('./mercari-api');
@@ -19,34 +17,42 @@ const CONFIG = {
   proxy: process.env.PROXY || 'http://127.0.0.1:7897',
   timeout: 60000,              // 页面加载超时(ms)
   stateFile: __dirname + '/seen.json',   // 已通知商品记录
-  loopMinutes: 15,
+  loopMinutes: 1,
 };
 
 // ---------- 抓取 ----------
-// 主路径:直连搜索 API(约 0.5~1 秒,可拿全量商品)。dpop.json 缺失或
-// API 返回 401(dpop 过期)时,回退到浏览器渲染模式。USE_API=0 强制浏览器。
+// 纯 API 直连。dpop 令牌失效(401)时,自动用 Playwright 打开搜索页
 
 async function fetchSearchResults(limit = 0) {
-  if (process.env.USE_API !== '0') {
-    try {
-      const items = await searchViaApi(CONFIG.keyword, {
-        sort: 'SORT_CREATED_TIME',
-        pageSize: limit > 0 ? Math.min(limit, 120) : 120,
-        maxPages: limit > 0 ? 1 : 4,
-      });
-      if (items.length > 0) {
-        console.log('[*] 使用 API 直连,共 ' + items.length + ' 件');
-        return limit > 0 ? items.slice(0, limit) : items;
-      }
-    } catch (e) {
-      console.warn('[!] API 直连失败,回退浏览器模式:', e.message);
+  const opts = {
+    sort: 'SORT_CREATED_TIME',
+    pageSize: limit > 0 ? Math.min(limit, 120) : 120,
+    maxPages: limit > 0 ? 1 : 4,
+  };
+  try {
+    const items = await searchViaApi(CONFIG.keyword, opts);
+    if (items.length > 0) {
+      console.log('[*] 使用 API 直连,共 ' + items.length + ' 件');
+      return limit > 0 ? items.slice(0, limit) : items;
+    }
+  } catch (e) {
+    console.warn('[!] API 调用失败:', e.message);
+  }
+  // API 不可用:自动刷新 dpop 令牌后重试一次
+  console.log('[*] 尝试刷新 dpop 令牌…');
+  const refreshed = await refreshDpop();
+  if (refreshed) {
+    const items = await searchViaApi(CONFIG.keyword, opts);
+    if (items.length > 0) {
+      console.log('[*] 令牌已刷新,API 重试成功,共 ' + items.length + ' 件');
+      return limit > 0 ? items.slice(0, limit) : items;
     }
   }
-  const items = await fetchViaBrowser();
-  return limit > 0 ? items.slice(0, limit) : items;
+  throw new Error('API 直连失败且令牌刷新失败');
 }
 
-async function fetchViaBrowser() {
+// 用 Playwright 打开搜索页,捕获 API 请求中的新 dpop 令牌并写入 dpop.json
+async function refreshDpop() {
   const channel = process.env.BROWSER_CHANNEL || undefined; // 如 "msedge"/"chrome"
   const browser = await chromium.launch({ headless: true, channel });
   try {
@@ -54,80 +60,62 @@ async function fetchViaBrowser() {
       proxy: { server: CONFIG.proxy },
       locale: 'ja-JP',
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-      viewport: { width: 1280, height: 2000 },
     });
     const page = await ctx.newPage();
-
-    const url = 'https://jp.mercari.com/search?keyword=' +
-      encodeURIComponent(CONFIG.keyword) + '&status_on_sale=1';
-    console.log('[*] 访问', url);
+    let dpop = null;
+    page.on('request', (r) => {
+      if (r.url().includes('entities:search')) dpop = r.headers()['dpop'];
+    });
+    const url = 'https://jp.mercari.com/search?keyword=' + encodeURIComponent(CONFIG.keyword) + '&status_on_sale=1';
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: CONFIG.timeout });
-
-    // 等待商品列表渲染(li 卡片,包含商品和 Shops 商品)
-    await page.waitForSelector('li[data-testid="item-cell"]', { timeout: CONFIG.timeout });
-
-    // 切换为「新しい順」(新着順)。URL 参数 sort 无效,必须通过下拉框选择。
-    // 注意:部分无头浏览器下 selectOption 会静默失败(值不变),需显式验证。
-    const sortSel = page.locator('select[name="sortOrder"]');
-    await sortSel.selectOption('created_time:desc');
-    for (let attempt = 0; attempt < 3; attempt++) {
-      // 等列表在新排序下重新渲染完成(selectOption 后列表会重建)
-      await page.waitForFunction(() => {
-        const sel = document.querySelector('select[name="sortOrder"]');
-        return sel && sel.value === 'created_time:desc' &&
-          document.querySelectorAll('li[data-testid="item-cell"]').length > 0;
-      }, { timeout: CONFIG.timeout });
-      const val = await sortSel.inputValue();
-      if (val === 'created_time:desc') break;
-      await sortSel.selectOption('created_time:desc'); // 重试
-      if (attempt === 2) throw new Error('排序切换失败:select 值仍为 ' + val);
+    await page.waitForTimeout(8000); // 等待 API 请求发出
+    if (dpop) {
+      fs.writeFileSync(__dirname + '/dpop.json', JSON.stringify({ captured: Date.now(), dpop }));
+      return true;
     }
-
-    // 商品信息解析。注意:该函数在页面上下文内执行,不能引用 Node 闭包变量。
-    // 卡片 innerText 格式: "¥ 7,200 タイトル" (已售罄时还有 "売り切れ" 文本)
-    // kw 为传入的搜索关键词,用于从标题中截取商品名(去掉 ¥ 价格前缀)。
-    const parseItems = (els, kw) =>
-      els.map((el) => {
-        const text = (el.innerText || '').replace(/\n+/g, ' ').trim();
-        const priceMatch = text.match(/¥\s*([\d,]+)/);
-        const soldOut = /売り切れ|予約受付中|出品停止/.test(text);
-        const link = el.querySelector('a[href*="/item/"], a[href*="/shops/product/"]');
-        const href = link ? link.getAttribute('href') : '';
-        const title = text.replace(/^\s*¥\s*[\d,]+\s*/, '').trim();
-        const kwIdx = title.indexOf(kw);
-        return {
-          title,
-          name: kwIdx >= 0 ? title.slice(kwIdx) : title, // 商品名(从关键词位置截取)
-          price: priceMatch ? parseInt(priceMatch[1].replace(/,/g, ''), 10) : 0,
-          url: 'https://jp.mercari.com' + href,
-          soldOut,
-        };
-      });
-
-    // 只保留标题含完整搜索关键词的商品(Mercari 分词搜索会混入无关商品)
-    const itemSel = 'li[data-testid="item-cell"]';
-    let items = (await page.locator(itemSel).evaluateAll(parseItems, CONFIG.keyword))
-      .filter((i) => i.title.includes(CONFIG.keyword) && !i.soldOut && i.price > 0);
-
-    // 滚动到底部加载更多,最多两次
-    for (let i = 0; i < 2; i++) {
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await page.waitForTimeout(2000);
-      const more = await page.locator(itemSel).count();
-      if (more <= items.length) break;
-      items = (await page.locator(itemSel).evaluateAll(parseItems, CONFIG.keyword))
-        .filter((i) => i.title.includes(CONFIG.keyword) && !i.soldOut && i.price > 0);
-    }
-
-    return items;
+    return false;
+  } catch (e) {
+    console.error('[!] 令牌刷新失败:', e.message);
+    return false;
   } finally {
     await browser.close();
   }
 }
 
-// ---------- 去重 ----------
-
 const fs = require('fs');
+
+// ---------- 日志 ----------
+// 脚本自行写 watch.log(追加),不再依赖 bat 重定向(重定向会持有文件句柄,
+// 导致轮转 rename 失败)。console 输出同步写日志;超限自动轮转为 .old。
+
+const LOG_FILE = __dirname + '/watch.log';
+const LOG_LIMIT = 1 * 1024 * 1024; // 1MB,超过则轮转
+
+function rotateLog() {
+  try {
+    const stat = fs.statSync(LOG_FILE);
+    if (stat.size <= LOG_LIMIT) return;
+    const old = LOG_FILE + '.old';
+    fs.rmSync(old, { force: true });
+    fs.renameSync(LOG_FILE, old);
+    fs.writeFileSync(LOG_FILE, ''); // 立即重建空日志
+    console.log(`[log] watch.log 超 ${(LOG_LIMIT / 1024 / 1024).toFixed(0)}MB,已轮转为 watch.log.old`);
+  } catch (e) { console.error('[!] 日志轮转失败:', e.message); }
+}
+
+// console 输出同步写入 watch.log(瞬时句柄,不阻塞轮转)
+const origLog = console.log;
+const origError = console.error;
+console.log = (...args) => {
+  origLog(...args);
+  try { fs.appendFileSync(LOG_FILE, args.join(' ') + '\n'); } catch {}
+};
+console.error = (...args) => {
+  origError(...args);
+  try { fs.appendFileSync(LOG_FILE, '[ERR] ' + args.join(' ') + '\n'); } catch {}
+};
+
+// ---------- 去重 ----------
 
 function loadSeen() {
   try { return new Set(require(CONFIG.stateFile)); } catch { return new Set(); }
@@ -229,6 +217,7 @@ async function main() {
     const minutes = parseInt(args[idx + 1], 10) || CONFIG.loopMinutes;
     console.log(`[*] 循环模式:每 ${minutes} 分钟检查一次`);
     while (true) {
+      rotateLog(); // 每次循环前检查日志大小
       try { await runOnce(); } catch (e) { console.error('[!] 本次抓取失败:', e.message); }
       await new Promise((r) => setTimeout(r, minutes * 60 * 1000));
     }

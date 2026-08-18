@@ -6,8 +6,8 @@
  * 带上 dpop(DPoP JWT) 令牌即可直接调用,无需启动浏览器。
  * 单次请求约 0.5~1 秒,可拿全量商品(浏览器只渲染首屏)。
  *
- * dpop 令牌由 get-dpop.js 从真实浏览器会话捕获,存于 dpop.json。
- * 令牌复用有效(实测连续调用无限制),若失效返回 401 则需重新捕获。
+ * dpop 令牌由浏览器会话捕获(脚本自动刷新),存于 dpop.json。
+ * 令牌复用有效(实测连续调用无限制),若失效返回 401 则自动重新捕获。
  */
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -25,7 +25,7 @@ function loadDpop() {
  * 直连搜索 API。
  * @param {string} keyword 搜索关键词
  * @param {object} opts { sort: 'SORT_CREATED_TIME'|'SORT_SCORE', pageSize, pageToken, maxPages }
- * @returns {Promise<Array>} 商品数组 [{ id, name, price, status, created, url, soldOut }]
+ * @returns {Promise<Array>} 商品数组 [{ id, title, name, price, status, created, url }]
  */
 async function searchViaApi(keyword, opts = {}) {
   const {
@@ -35,7 +35,7 @@ async function searchViaApi(keyword, opts = {}) {
     maxPages = 3,
   } = opts;
   const dpop = loadDpop();
-  if (!dpop) throw new Error('dpop.json 缺失,请先运行 node get-dpop.js 捕获令牌');
+  if (!dpop) throw new Error('dpop.json 缺失,请运行监控脚本自动捕获令牌');
 
   const payload = {
     userId: '',
@@ -58,7 +58,7 @@ async function searchViaApi(keyword, opts = {}) {
     useDynamicAttribute: true, withSuggestedItems: true, withOfferPricePromotion: true,
     withProductSuggest: true, withParentProducts: false, withProductArticles: true,
     withSearchConditionId: false, withAuction: true,
-    laplaceDeviceUuid: '',
+    laplaceDeviceUuid: '00000000-0000-4000-8000-' + Math.random().toString(16).slice(2, 14), // 随机 UUID
   };
 
   const tmp = path.join(require('os').tmpdir(), 'mercari-api-' + process.pid + '.json');
@@ -100,7 +100,6 @@ async function searchViaApi(keyword, opts = {}) {
     name: it.name || '',
     price: parseInt(it.price, 10) || 0,
     status: it.status || '',
-    soldOut: it.status !== 'ITEM_STATUS_ON_SALE',
     created: it.created ? parseInt(it.created, 10) : 0,
     url: 'https://jp.mercari.com/item/' + it.id,
   }));
