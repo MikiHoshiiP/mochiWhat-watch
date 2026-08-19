@@ -18,6 +18,8 @@ concurrency:
 jobs:
   watch:
     runs-on: ubuntu-latest
+    # 兜底超时:任何卡住都会在 10 分钟后终止,避免默认 6 小时阻塞后续调度
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
