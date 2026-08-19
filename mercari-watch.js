@@ -1,7 +1,7 @@
 /**
  * もちwhat Mercari 低价监控
  * 只看「最新上架的一件商品」:新着順第一件,当价格低于阈值时通知。
- * 同一商品只通知一次;未通知过的高价商品会持续评估(降价后触发)。
+ * 标题命中特例名称时使用专属阈值;同一商品只通知一次。
  * 纯 API 直连(约 0.5~1 秒/次);dpop 令牌失效时自动刷新并重试。
  *
  * 用法:
@@ -13,12 +13,37 @@ const { searchViaApi } = require('./mercari-api');
 
 const CONFIG = {
   keyword: 'もちwhat',
-  priceLimit: 100000,          // 日元,低于此价格视为低价
+  priceLimit: 100000,          // 日元,未命中特例时的默认阈值
+  specialPriceLimits: {
+    '櫻木真乃': 120000,
+    '風野灯織': 150000,
+    '八宮めぐる': 120000,
+    '幽谷霧子': 150000,
+    '園田智代子': 120000,
+    '杜野凛世': 150000,
+    '黛冬優子': 70000,
+  },
   proxy: process.env.PROXY || 'http://127.0.0.1:7897',
   timeout: 60000,              // 页面加载超时(ms)
   stateFile: __dirname + '/seen.json',   // 已通知商品记录
   loopMinutes: 1,
 };
+
+// 标题同时包含搜索词和特例名称时,使用对应阈值覆盖默认值。
+// 如果一个标题意外命中多个名称,取最低阈值,避免误报。
+function getPriceRule(title) {
+  const matches = title.includes(CONFIG.keyword)
+    ? Object.entries(CONFIG.specialPriceLimits).filter(([name]) => title.includes(name))
+    : [];
+
+  if (matches.length === 0) {
+    return { priceLimit: CONFIG.priceLimit, matchedNames: [] };
+  }
+
+  const priceLimit = Math.min(...matches.map(([, limit]) => limit));
+  const matchedNames = matches.filter(([, limit]) => limit === priceLimit).map(([name]) => name);
+  return { priceLimit, matchedNames };
+}
 
 // ---------- 抓取 ----------
 // 优先 API 直连(curl,快)。curl 被风控(403,如 CI 环境)或 dpop 失效时,
@@ -332,13 +357,18 @@ async function runOnce() {
     return;
   }
   const latest = items[0]; // 最新上架的商品
+  const { priceLimit, matchedNames } = getPriceRule(latest.title);
+  const ruleLabel = matchedNames.length > 0
+    ? `特例 ${matchedNames.join('/')}`
+    : '默认';
   console.log(`[*] 最新商品:${latest.title} ¥${latest.price.toLocaleString()} (共${items.length}件在售)`);
+  console.log(`[*] 匹配规则:${ruleLabel},价格阈值 ¥${priceLimit.toLocaleString()}`);
 
   const seen = loadSeen();
   const isFresh = !seen.has(latest.url); // 未通知过
 
-  if (latest.price < CONFIG.priceLimit && isFresh) {
-    console.log(`[*] 最新商品价格 ¥${latest.price.toLocaleString()} < ${CONFIG.priceLimit},通知!`);
+  if (latest.price < priceLimit && isFresh) {
+    console.log(`[*] 最新商品价格 ¥${latest.price.toLocaleString()} < ¥${priceLimit.toLocaleString()},通知!`);
     const delivered = await notify([latest]);
     if (delivered) {
       seen.add(latest.url); // 通知成功才记录;失败则下次重试
@@ -352,7 +382,7 @@ async function runOnce() {
   } else if (!isFresh) {
     console.log('[*] 该商品已通知过,跳过');
   } else {
-    console.log(`[*] 最新商品价格 ¥${latest.price.toLocaleString()} >= ${CONFIG.priceLimit},不通知(降价后会再次评估)`);
+    console.log(`[*] 最新商品价格 ¥${latest.price.toLocaleString()} >= ¥${priceLimit.toLocaleString()},不通知`);
   }
 }
 
