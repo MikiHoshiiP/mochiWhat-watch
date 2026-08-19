@@ -2,7 +2,9 @@ name: Mercari Watch
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # 每 5 分钟
+    # 每 3 分钟。GitHub 调度实际触发可能延迟至 15 分钟(平台特性),
+    # 更密的 cron + concurrency 串行能把实际间隔压到约 5~8 分钟。
+    - cron: '*/3 * * * *'
   workflow_dispatch:        # 手动触发
 
 # 需要写权限以持久化 seen.json(去重状态)
