@@ -27,12 +27,8 @@ jobs:
 
       - run: npm install
 
-      # Playwright 浏览器仅用于 dpop 失效时刷新令牌;缓存安装避免每轮重新下载
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}
-      - run: npx playwright install --with-deps chromium || true
+      # 浏览器:runner 自带 Chrome(channel: 'chrome'),无需 playwright install
+      # (--with-deps 的 apt 安装在此环境常因镜像源超时失败)
 
       # 校验至少一个远程通知渠道已配置(CI 无桌面通知,缺 SCT_KEY 则全程假成功)
       - name: Verify notification secret

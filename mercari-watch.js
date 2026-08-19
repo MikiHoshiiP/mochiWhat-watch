@@ -62,8 +62,10 @@ async function fetchSearchResults(limit = 0) {
 }
 
 // Playwright 打开搜索页,拦截页面发出的 entities:search 响应并解析商品
+// 浏览器选择:优先系统浏览器(CI runner 自带 Chrome;本机 Windows 用 Edge),
+// 免去 Playwright 下载浏览器(CI 上 --with-deps 的 apt 安装常超时失败)。
 async function fetchViaBrowser() {
-  const channel = process.env.BROWSER_CHANNEL || undefined;
+  const channel = process.env.BROWSER_CHANNEL || (process.platform === 'win32' ? 'msedge' : 'chrome');
   let browser = null;
   try {
     const proxyServer = process.env.PROXY === 'direct' ? null : (process.env.PROXY || 'http://127.0.0.1:7897');
@@ -118,7 +120,8 @@ async function fetchViaBrowser() {
 
 // 用 Playwright 打开搜索页,捕获 API 请求中的新 dpop 令牌并写入 dpop.json
 async function refreshDpop() {
-  const channel = process.env.BROWSER_CHANNEL || undefined; // 如 "msedge"/"chrome"
+  // 浏览器选择:同 fetchViaBrowser(CI 用系统 Chrome,本机用 Edge)
+  const channel = process.env.BROWSER_CHANNEL || (process.platform === 'win32' ? 'msedge' : 'chrome');
   let browser = null;
   try {
     // 代理:PROXY=direct 时不配置(CI/海外直连);未设置默认走本地 Clash
