@@ -101,7 +101,7 @@ const CONFIG = {
 | `PROXY` | 代理地址;`direct` = 不走代理(GitHub Actions / 海外服务器直连) |
 | `SCT_KEY` | Server酱 SendKey,设置后推送微信「服务通知」 |
 | `DPOP` | Mercari API 令牌(CI 从 Secret 注入;本机默认读 `dpop.json`) |
-| `BROWSER_CHANNEL` | 浏览器通道:`msedge` / `chrome`(默认 Playwright 自带 Chromium) |
+| `BROWSER_CHANNEL` | 浏览器通道,覆盖默认选择:`msedge` / `chrome`(默认按平台自动选系统浏览器:Windows→Edge,其他→Chrome,无需下载) |
 | `WECOM_WEBHOOK` | 企业微信群机器人 webhook(可选) |
 
 ## 微信推送
