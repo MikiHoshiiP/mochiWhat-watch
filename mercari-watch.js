@@ -111,27 +111,30 @@ async function fetchSearchResults(limit = 0) {
 // (如未装 Chrome 的服务器)自动回退 Playwright 自带 chromium。
 // 通道结果缓存,避免每次重试。
 
-let browserChannelCache = null; // null=未探测;'ok:xxx'/string 通道名
+let browserChannelCache = null; // null=未探测;string=已确定的通道
 
-function getBrowserChannel() {
+async function getBrowserChannel() {
   if (browserChannelCache) return browserChannelCache;
   const wanted = process.env.BROWSER_CHANNEL || (process.platform === 'win32' ? 'msedge' : 'chrome');
   // 显式指定时直接用(用户负责保证可用)
   if (process.env.BROWSER_CHANNEL) { browserChannelCache = process.env.BROWSER_CHANNEL; return browserChannelCache; }
+  // 真正启动一次验证(await):成功则用系统浏览器,失败回退自带 chromium
+  let testBrowser = null;
   try {
-    // 探测系统浏览器是否可用(以 chromium.launch 试一次)
-    require('playwright').chromium.launch({ headless: true, channel: wanted });
+    testBrowser = await chromium.launch({ headless: true, channel: wanted });
     browserChannelCache = wanted;
   } catch {
     console.warn('[*] 系统浏览器不可用,回退 Playwright 自带 chromium');
     browserChannelCache = 'chromium'; // 默认通道(Playwright 内置)
+  } finally {
+    if (testBrowser) await testBrowser.close();
   }
   return browserChannelCache;
 }
 
 // Playwright 打开搜索页,拦截页面发出的 entities:search 响应并解析商品
 async function fetchViaBrowser() {
-  const channel = getBrowserChannel();
+  const channel = await getBrowserChannel();
   let browser = null;
   try {
     const proxyServer = process.env.PROXY === 'direct' ? null : (process.env.PROXY || 'http://127.0.0.1:7897');
@@ -186,7 +189,7 @@ async function fetchViaBrowser() {
 
 // 用 Playwright 打开搜索页,捕获 API 请求中的新 dpop 令牌并写入 dpop.json
 async function refreshDpop() {
-  const channel = getBrowserChannel(); // 与 fetchViaBrowser 相同:系统浏览器优先,回退 chromium
+  const channel = await getBrowserChannel(); // 与 fetchViaBrowser 相同:系统浏览器优先,回退 chromium
   let browser = null;
   try {
     // 代理:PROXY=direct 时不配置(CI/海外直连);未设置默认走本地 Clash
