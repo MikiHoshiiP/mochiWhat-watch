@@ -1,0 +1,17 @@
+[Unit]
+Description=Mercari もちwhat low-price watcher
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/mochiWhat-watch
+ExecStart=/usr/bin/node mercari-watch.js --loop 1
+Restart=always
+RestartSec=10
+Environment=PROXY=direct
+Environment=SCT_KEY=你的SendKey
+Environment=BROWSER_CHANNEL=chromium
+# 日志由 journald 管理(自动轮转)
+
+[Install]
+WantedBy=multi-user.target
