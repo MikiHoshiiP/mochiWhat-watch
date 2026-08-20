@@ -46,9 +46,13 @@ function getPriceRule(title) {
 }
 
 // ---------- 抓取 ----------
-// 优先 API 直连(curl,快)。curl 被风控(403,如 CI 环境)或 dpop 失效时,
+// 优先 API 直连(curl,快)。curl 被风控(403,如 CI/服务器 IP)或 dpop 失效时,
 // 回退浏览器模式:Playwright 打开搜索页,拦截页面发出的 API 响应。
-// 两种模式共享同一商品解析逻辑。
+// 熔断器:curl 连续失败 3 次后,本轮会话内直接走浏览器(不再白等 20 秒);
+// 浏览器成功一次后重置,网络恢复时自动回到快速 API 通道。
+
+let apiFailStreak = 0; // curl 连续失败次数
+const API_BREAKER_THRESHOLD = 3;
 
 async function fetchSearchResults(limit = 0) {
   const opts = {
@@ -56,20 +60,35 @@ async function fetchSearchResults(limit = 0) {
     pageSize: limit > 0 ? Math.min(limit, 120) : 120,
     maxPages: limit > 0 ? 1 : 4,
   };
+
+  // 熔断打开:跳过 curl,直接浏览器
+  if (apiFailStreak >= API_BREAKER_THRESHOLD) {
+    console.log(`[*] curl 连续失败 ${apiFailStreak} 次,熔断:直接浏览器抓取`);
+    const items = await fetchViaBrowser();
+    if (items.length > 0) {
+      console.log('[*] 使用浏览器抓取,共 ' + items.length + ' 件');
+      return limit > 0 ? items.slice(0, limit) : items;
+    }
+    return [];
+  }
+
   let items;
   try {
     items = await searchViaApi(CONFIG.keyword, opts); // 仅网络/解析错误抛异常
     if (items.length > 0) {
+      apiFailStreak = 0; // 成功即重置熔断
       console.log('[*] 使用 API 直连,共 ' + items.length + ' 件');
       return limit > 0 ? items.slice(0, limit) : items;
     }
     console.warn('[!] API 返回空结果,回退浏览器模式');
   } catch (e) {
-    console.warn('[!] API 调用失败,回退浏览器模式:', e.message);
+    apiFailStreak++;
+    console.warn(`[!] API 调用失败(连续 ${apiFailStreak} 次),回退浏览器模式:`, e.message);
   }
   // 回退:浏览器抓取(拦截页面 API 响应)
   items = await fetchViaBrowser();
   if (items.length > 0) {
+    apiFailStreak = 0; // 浏览器成功 → 下轮可再试 curl
     console.log('[*] 使用浏览器抓取,共 ' + items.length + ' 件');
     return limit > 0 ? items.slice(0, limit) : items;
   }
@@ -79,6 +98,7 @@ async function fetchSearchResults(limit = 0) {
   if (refreshed) {
     items = await searchViaApi(CONFIG.keyword, opts);
     if (items.length > 0) {
+      apiFailStreak = 0;
       console.log('[*] 令牌已刷新,API 重试成功,共 ' + items.length + ' 件');
       return limit > 0 ? items.slice(0, limit) : items;
     }
