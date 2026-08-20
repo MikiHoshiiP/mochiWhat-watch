@@ -443,4 +443,19 @@ async function main() {
   }
 }
 
-main().catch((e) => { console.error('[FATAL]', e); process.exit(1); });
+// ---------- 全局兜底 ----------
+// 循环模式下进程必须常驻:任何未捕获异常都不应杀死监控。
+// (async 回调如 page.on('response') 里的异常会变成 unhandledRejection)
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[!] 未捕获的 Promise 拒绝(已忽略,监控继续):', reason?.message || reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[!] 未捕获异常(已忽略,监控继续):', err?.message || err);
+});
+
+main().catch((e) => {
+  console.error('[FATAL]', e);
+  // 循环模式下不退出(等下次轮询);仅单次模式失败退出
+  if (!process.argv.includes('--loop')) process.exit(1);
+});
