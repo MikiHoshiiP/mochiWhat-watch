@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
 # Mercari もちwhat 监控 - Linux 部署脚本(服务器上执行)
-# 用法: bash deploy-linux.sh
+# 前提:代码已获取到本机(如 git clone 或 scp),脚本在项目根目录下运行。
+# 用法: bash deploy-linux.sh [项目目录]
 set -euo pipefail
 
-APP_DIR="${1:-$HOME/mochiWhat-watch}"
+APP_DIR="${1:-$(pwd)}"
 SERVICE_NAME="mercari-watch"
+
+echo "==> 0/4 校验代码目录"
+if [ ! -f "$APP_DIR/package.json" ] || [ ! -f "$APP_DIR/mercari-watch.js" ]; then
+  echo "✗ $APP_DIR 下未找到项目代码。请先获取代码:"
+  echo "    git clone https://github.com/MikiHoshiiP/mochiWhat-watch.git && cd mochiWhat-watch"
+  echo "  然后重新运行本脚本。"
+  exit 1
+fi
 
 echo "==> 1/4 检查 Node.js"
 if ! command -v node >/dev/null; then
@@ -14,18 +23,12 @@ if ! command -v node >/dev/null; then
 fi
 echo "Node: $(node --version)"
 
-echo "==> 2/4 获取代码(如未 clone)"
-if [ ! -f "$APP_DIR/package.json" ]; then
-  git clone https://github.com/MikiHoshiiP/mochiWhat-watch.git "$APP_DIR"
-fi
+echo "==> 2/4 安装依赖"
 cd "$APP_DIR"
 npm install
 
 echo "==> 3/4 配置环境"
-# 提示设置 SCT_KEY(微信推送)
-if ! grep -q "SCT_KEY" "$APP_DIR/mercari-watch.service" 2>/dev/null; then
-  read -rp "请输入 Server酱 SendKey(留空跳过): " SCT
-fi
+read -rp "请输入 Server酱 SendKey(留空跳过): " SCT
 
 cat > mercari-watch.service <<EOF
 [Unit]
