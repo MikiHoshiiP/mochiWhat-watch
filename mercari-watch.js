@@ -86,11 +86,32 @@ async function fetchSearchResults(limit = 0) {
   return [];
 }
 
+// ---------- 浏览器启动(带通道回退) ----------
+// 优先系统浏览器(win32→msedge,其他→chrome);系统浏览器缺失时
+// (如未装 Chrome 的服务器)自动回退 Playwright 自带 chromium。
+// 通道结果缓存,避免每次重试。
+
+let browserChannelCache = null; // null=未探测;'ok:xxx'/string 通道名
+
+function getBrowserChannel() {
+  if (browserChannelCache) return browserChannelCache;
+  const wanted = process.env.BROWSER_CHANNEL || (process.platform === 'win32' ? 'msedge' : 'chrome');
+  // 显式指定时直接用(用户负责保证可用)
+  if (process.env.BROWSER_CHANNEL) { browserChannelCache = process.env.BROWSER_CHANNEL; return browserChannelCache; }
+  try {
+    // 探测系统浏览器是否可用(以 chromium.launch 试一次)
+    require('playwright').chromium.launch({ headless: true, channel: wanted });
+    browserChannelCache = wanted;
+  } catch {
+    console.warn('[*] 系统浏览器不可用,回退 Playwright 自带 chromium');
+    browserChannelCache = 'chromium'; // 默认通道(Playwright 内置)
+  }
+  return browserChannelCache;
+}
+
 // Playwright 打开搜索页,拦截页面发出的 entities:search 响应并解析商品
-// 浏览器选择:优先系统浏览器(CI runner 自带 Chrome;本机 Windows 用 Edge),
-// 免去 Playwright 下载浏览器(CI 上 --with-deps 的 apt 安装常超时失败)。
 async function fetchViaBrowser() {
-  const channel = process.env.BROWSER_CHANNEL || (process.platform === 'win32' ? 'msedge' : 'chrome');
+  const channel = getBrowserChannel();
   let browser = null;
   try {
     const proxyServer = process.env.PROXY === 'direct' ? null : (process.env.PROXY || 'http://127.0.0.1:7897');
@@ -145,8 +166,7 @@ async function fetchViaBrowser() {
 
 // 用 Playwright 打开搜索页,捕获 API 请求中的新 dpop 令牌并写入 dpop.json
 async function refreshDpop() {
-  // 浏览器选择:同 fetchViaBrowser(CI 用系统 Chrome,本机用 Edge)
-  const channel = process.env.BROWSER_CHANNEL || (process.platform === 'win32' ? 'msedge' : 'chrome');
+  const channel = getBrowserChannel(); // 与 fetchViaBrowser 相同:系统浏览器优先,回退 chromium
   let browser = null;
   try {
     // 代理:PROXY=direct 时不配置(CI/海外直连);未设置默认走本地 Clash
