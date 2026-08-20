@@ -2,7 +2,7 @@
 
 自动监控 Mercari(メルカリ)上「もちwhat」的**最新上架商品**:只检查新着顺第一件,当其**价格严格低于匹配阈值**时,推送微信「服务通知」。默认阈值为 100,000 日元;标题同时包含「もちwhat」和特例名称时,使用对应的专属阈值。同一商品只通知一次。
 
-支持两种运行方式:**GitHub Actions 云端定时**(推荐,关机也持续)与**本机循环**。
+支持三种运行方式:**GitHub Actions 云端定时**(推荐,关机也持续)、**Linux 服务器 / Docker** 与**本机循环**。
 
 ## 工作原理
 
@@ -42,7 +42,7 @@
 | `DPOP` | Mercari API 令牌,运行 `node gen-dpop.js` 或从本机 `dpop.json` 获取 |
 
 3. Workflow [.github/workflows/watch.yml](.github/workflows/watch.yml) 已配置:
-   - `*/5 * * * *` 每 5 分钟自动运行(可改 cron)
+   - `*/3 * * * *` 每 3 分钟自动运行(实际间隔约 5~8 分钟,受平台调度延迟影响;可改 cron)
    - 手动触发:**Actions → Mercari Watch → Run workflow**
    - 去重状态 `seen.json` 自动 commit 回仓库,跨 run 持续
 
@@ -51,7 +51,55 @@
 - **Forbidden(403)**:GitHub 数据中心 IP 访问 API 被风控,属预期——脚本自动回退浏览器抓取,无需处理
 - **Actions 未显示 workflow**:在仓库 Actions 页面启用,或空提交推送强制扫描
 
-## 方式二:本机运行
+## 方式二:Linux 服务器 / Docker
+
+适合有自己的 Linux 服务器(海外 VPS 直连 Mercari,无需代理)。
+
+### 直接运行(源码)
+
+```bash
+git clone https://github.com/MikiHoshiiP/mochiWhat-watch.git
+cd mochiWhat-watch
+npm install
+
+# 海外服务器:PROXY=direct 直连,1 分钟轮询
+PROXY=direct SCT_KEY=你的SendKey node mercari-watch.js --loop 1
+```
+
+### systemd 服务(服务器上常驻,开机自启)
+
+```bash
+bash deploy-linux.sh
+# 交互式输入 SendKey → 自动注册服务并启动
+```
+
+管理命令:
+
+```bash
+sudo journalctl -u mercari-watch -f   # 日志
+sudo systemctl restart mercari-watch  # 重启
+```
+
+### Docker(容器内运行,无需 systemd)
+
+```bash
+docker build -t mochi-watch .
+docker run -d --name mochi-watch --restart=always \
+  -e SCT_KEY=你的SendKey -e PROXY=direct \
+  -v mochi-data:/app mochi-watch
+# 或 docker compose up -d(需先 export SCT_KEY=你的SendKey)
+```
+
+> 容器内没有 systemd,`systemctl` 不可用属正常。崩溃重启由 Docker 的 `--restart=always` 承担,数据(seen.json/dpop.json/watch.log)挂载在 `/app` 卷持久化。
+
+### 前台窗口与进程的关系(重要)
+
+- `docker run -tid` 分离模式创建容器后,**容器不依赖窗口**;关掉 SSH/终端,容器照常运行
+- 容器内 `docker exec -it` 进去**前台跑**的进程,会随窗口关闭而终止
+- 要脱离窗口常驻:用 `docker exec -d` 分离执行,或直接用上面的 `docker run -d`(推荐)
+- 进程随容器重启而消失,`--restart=always` 可让容器崩溃后自动重启
+
+## 方式三:本机运行(Windows)
 
 ### 环境要求
 
@@ -125,7 +173,7 @@ const CONFIG = {
 | `PROXY` | 代理地址;`direct` = 不走代理(GitHub Actions / 海外服务器直连) |
 | `SCT_KEY` | Server酱 SendKey,设置后推送微信「服务通知」 |
 | `DPOP` | Mercari API 令牌(CI 从 Secret 注入;本机默认读 `dpop.json`) |
-| `BROWSER_CHANNEL` | 浏览器通道,覆盖默认选择:`msedge` / `chrome`(默认按平台自动选系统浏览器:Windows→Edge,其他→Chrome,无需下载) |
+| `BROWSER_CHANNEL` | 浏览器通道,覆盖默认选择:`msedge` / `chrome` / `chromium`。默认自动:Windows→系统 Edge,其他→系统 Chrome;系统浏览器缺失时自动回退 Playwright 自带 chromium(如精简服务器/容器) |
 | `WECOM_WEBHOOK` | 企业微信群机器人 webhook(可选) |
 
 ## 微信推送
@@ -164,7 +212,11 @@ mochi/
 ├── mercari-api.js         # API 直连模块(dpop 令牌、分页、在售过滤、错误识别)
 ├── toast.ps1              # Windows 桌面通知(PowerShell,仅本机)
 ├── watch.bat.example      # 本机循环启动脚本模板(复制为 watch.bat 使用)
-├── .github/workflows/watch.yml  # GitHub Actions 定时(每 5 分钟)
+├── gen-dpop.js            # 生成/轮换 dpop 令牌(写入 dpop.json,可配 Secret)
+├── deploy-linux.sh        # Linux systemd 一键部署脚本
+├── Dockerfile             # Docker 镜像(容器内前台运行,restart policy 守护)
+├── docker-compose.yml     # Docker Compose 编排
+├── .github/workflows/watch.yml  # GitHub Actions 定时(每 3 分钟)
 ├── package.json           # 依赖(playwright)
 ├── dpop.json              # API 令牌(自动生成,勿手动编辑;gitignore,CI 用 Secret)
 └── seen.json              # 已通知商品记录(自动生成;云端自动 commit 持久化)
