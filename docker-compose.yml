@@ -1,0 +1,16 @@
+# Mercari もちwhat 低价监控 - Docker Compose
+# 用法: docker compose up -d
+# 环境变量 SCT_KEY 建议用 .env 文件或直接 export 后替换
+services:
+  watch:
+    build: .
+    container_name: mochi-watch
+    restart: always          # 崩溃/重启后自动拉起(替代 systemd)
+    environment:
+      - SCT_KEY=${SCT_KEY:-}
+      - PROXY=direct
+    volumes:
+      - mochi-data:/app  # 整个 /app 持久化(去重、dpop、日志)
+
+volumes:
+  mochi-data:
