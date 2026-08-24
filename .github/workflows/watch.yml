@@ -53,16 +53,16 @@ jobs:
           PROXY: direct
         run: node mercari-watch.js
 
-      # 去重状态持久化:把 seen.json 的变化提交回仓库(下次 run 继续去重)。
-      # seen.json 已在 .gitignore,须用 -f 强制 add。
+      # 去重状态持久化:把 seen.json / qq_seen.json 的变化提交回仓库(下次 run 继续去重)。
+      # 两者已在 .gitignore,须用 -f 强制 add。
       - name: Persist seen state
         run: |
-          if [ -f seen.json ] && [ -s seen.json ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add -f seen.json
-            git diff --cached --quiet || git commit -m "chore: update seen state [skip ci]"
-            git push
-          else
-            echo "seen.json 不存在或为空,跳过持久化"
-          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          for f in seen.json qq_seen.json; do
+            if [ -f "$f" ] && [ -s "$f" ]; then
+              git add -f "$f"
+            fi
+          done
+          git diff --cached --quiet || git commit -m "chore: update seen state [skip ci]"
+          git push

@@ -1,6 +1,7 @@
 node_modules/
-watch.log
+watch.log*
 seen.json.tmp
 .claude/
 watch.bat
 dpop.json
+qq_seen.json
