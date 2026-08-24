@@ -175,6 +175,7 @@ const CONFIG = {
 | `DPOP` | Mercari API 令牌(CI 从 Secret 注入;本机默认读 `dpop.json`) |
 | `BROWSER_CHANNEL` | 浏览器通道,覆盖默认选择:`msedge` / `chrome` / `chromium`。默认自动:Windows→系统 Edge,其他→系统 Chrome;系统浏览器缺失时自动回退 Playwright 自带 chromium(如精简服务器/容器) |
 | `WECOM_WEBHOOK` | 企业微信群机器人 webhook(可选) |
+| `NOTIFY_CHANNELS` | 通知通道开关(逗号分隔):`all`(默认)/`wechat`/`qq`/`toast`/`wecom`/`none`。如 `wechat,qq` 只开微信+QQ |
 | `QQ_WEBHOOK` | QQ 机器人(NapCat OneBot)HTTP 端点,群聊用 `http://127.0.0.1:3000/send_group_msg`,私聊用 `send_private_msg` |
 | `QQ_TOKEN` | NapCat 的 access token(如配置了认证) |
 | `QQ_USER_ID` | 接收通知的 QQ 号(私聊,与群二选一) |

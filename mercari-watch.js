@@ -286,6 +286,15 @@ function saveSeen(seen, file) {
 const { execFileSync } = require('child_process');
 const FETCH_TIMEOUT_MS = 10000; // 网络推送超时
 
+// 通知通道控制:NOTIFY_CHANNELS 环境变量(逗号分隔)
+//   all / 空 = 全部启用;wechat / qq / toast / wecom 单独或组合;none = 全部关闭
+function channelEnabled(name) {
+  const v = (process.env.NOTIFY_CHANNELS || 'all').toLowerCase();
+  if (v === 'all' || v === '') return true;
+  if (v === 'none') return false;
+  return v.split(',').map((s) => s.trim()).includes(name);
+}
+
 async function notify(items) {
   // 逐条输出完整信息(价格 + 商品名 + 链接),不截断
   const lines = items.map((i) => `¥${i.price.toLocaleString()} ${i.name || i.title}\n${i.url}`);
@@ -293,7 +302,7 @@ async function notify(items) {
   let delivered = false;
 
   // 1) Windows 桌面通知(仅 Windows 平台;服务器/Linux 自动跳过)
-  if (process.platform === 'win32') {
+  if (channelEnabled('toast') && process.platform === 'win32') {
     try {
       const message = lines.slice(0, 5).join('\n'); // toast 只显示前 5 条,避免过长
       execFileSync('powershell', [
@@ -312,7 +321,7 @@ async function notify(items) {
   }
 
   // 2) Server酱 → 微信(配置 SCT_KEY 后启用)。SendKey 在 https://sct.ftqq.com 获取
-  if (process.env.SCT_KEY) {
+  if (channelEnabled('wechat') && process.env.SCT_KEY) {
     try {
       const title = `低价! ¥${items[0].price.toLocaleString()} もちwhat`;
       const resp = await fetch(`https://sctapi.ftqq.com/${process.env.SCT_KEY}.send`, {
@@ -329,7 +338,7 @@ async function notify(items) {
 
   // 3) QQ 机器人:新上架通知在 runOnce 单独处理(见上),低价通知不再重复推 QQ
   // 4) 企业微信机器人(配置 WECOM_WEBHOOK 后启用),完整列表
-  if (process.env.WECOM_WEBHOOK) {
+  if (channelEnabled('wecom') && process.env.WECOM_WEBHOOK) {
     try {
       const resp = await fetch(process.env.WECOM_WEBHOOK, {
         method: 'POST',
@@ -404,7 +413,7 @@ async function sendAlert(message) {
     } catch (e) { console.error('[!] 异常桌面通知失败:', e.message); }
   }
 
-  if (process.env.SCT_KEY) {
+  if (channelEnabled('wechat') && process.env.SCT_KEY) {
     try {
       const resp = await fetch(`https://sctapi.ftqq.com/${process.env.SCT_KEY}.send`, {
         method: 'POST',
@@ -418,7 +427,7 @@ async function sendAlert(message) {
     } catch (e) { console.error('[!] 异常微信通知失败:', e.message); }
   }
 
-  if (await sendQqMessage('⚠️ もちwhat 监控异常\n' + message)) console.log('[✓] 已发送异常 QQ 通知');
+  if (channelEnabled('qq') && await sendQqMessage('⚠️ もちwhat 监控异常\n' + message)) console.log('[✓] 已发送异常 QQ 通知');
 }
 
 // ---------- 主流程 ----------
@@ -441,7 +450,7 @@ async function runOnce() {
   console.log(`[*] 匹配规则:${ruleLabel},价格阈值 ¥${priceLimit.toLocaleString()}`);
 
   // QQ 通道:新上架即推(与价格无关),独立去重 qq_seen.json
-  if (process.env.QQ_WEBHOOK && (process.env.QQ_USER_ID || process.env.QQ_GROUP_ID)) {
+  if (channelEnabled('qq') && process.env.QQ_WEBHOOK && (process.env.QQ_USER_ID || process.env.QQ_GROUP_ID)) {
     const qqSeen = loadSeen(CONFIG.stateFile.replace('seen.json', 'qq_seen.json'));
     if (!qqSeen.has(latest.url)) {
       const qqMsg = `🆕 新上架:${latest.title}\n¥${latest.price.toLocaleString()}\n${latest.url}`;
