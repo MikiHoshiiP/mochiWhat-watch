@@ -264,16 +264,19 @@ console.warn = (...args) => {
 };
 
 // ---------- 去重 ----------
+// seen.json: 微信低价通知去重(通知成功才记录,降价可重估)
+// qq_seen.json: QQ 上新通知去重(新上架即推,与价格无关)
 
-function loadSeen() {
+function loadSeen(file) {
   // 注意:不能用 require() 读取(有模块缓存,磁盘更新后仍返回旧数据)
-  try { return new Set(JSON.parse(fs.readFileSync(CONFIG.stateFile, 'utf8'))); } catch { return new Set(); }
+  try { return new Set(JSON.parse(fs.readFileSync(file || CONFIG.stateFile, 'utf8'))); } catch { return new Set(); }
 }
-function saveSeen(seen) {
+function saveSeen(seen, file) {
   // 原子写入:先写临时文件再重命名,避免中途崩溃损坏 seen.json
-  const tmp = CONFIG.stateFile + '.tmp';
+  const target = file || CONFIG.stateFile;
+  const tmp = target + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify([...seen], null, 2));
-  fs.renameSync(tmp, CONFIG.stateFile);
+  fs.renameSync(tmp, target);
 }
 
 // ---------- 通知 ----------
@@ -324,9 +327,7 @@ async function notify(items) {
     } catch (e) { console.error('[!] Server酱通知失败:', e.message); }
   }
 
-  // 3) QQ 机器人(NapCat OneBot,配置 QQ_WEBHOOK + QQ_USER_ID 后启用)
-  if (await sendQqMessage(body)) { console.log('[✓] 已发送 QQ 通知'); delivered = true; }
-
+  // 3) QQ 机器人:新上架通知在 runOnce 单独处理(见上),低价通知不再重复推 QQ
   // 4) 企业微信机器人(配置 WECOM_WEBHOOK 后启用),完整列表
   if (process.env.WECOM_WEBHOOK) {
     try {
@@ -430,6 +431,21 @@ async function runOnce() {
     : '默认';
   console.log(`[*] 最新商品:${latest.title} ¥${latest.price.toLocaleString()} (共${items.length}件在售)`);
   console.log(`[*] 匹配规则:${ruleLabel},价格阈值 ¥${priceLimit.toLocaleString()}`);
+
+  // QQ 通道:新上架即推(与价格无关),独立去重 qq_seen.json
+  if (process.env.QQ_WEBHOOK && process.env.QQ_USER_ID) {
+    const qqSeen = loadSeen(CONFIG.stateFile.replace('seen.json', 'qq_seen.json'));
+    if (!qqSeen.has(latest.url)) {
+      const qqMsg = `🆕 新上架:${latest.title}\n¥${latest.price.toLocaleString()}\n${latest.url}`;
+      if (await sendQqMessage(qqMsg)) {
+        qqSeen.add(latest.url);
+        saveSeen(qqSeen, CONFIG.stateFile.replace('seen.json', 'qq_seen.json'));
+        console.log('[✓] 已发送 QQ 上新通知');
+      } else {
+        console.log('[!] QQ 上新通知失败,下轮重试');
+      }
+    }
+  }
 
   const seen = loadSeen();
   const isFresh = !seen.has(latest.url); // 未通知过

@@ -201,7 +201,7 @@ node mercari-watch.js --loop 1
 | 渠道 | 说明 |
 |---|---|
 | Server酱 → 微信 | 主要渠道(云端与本机共用),低价商品推送微信「服务通知」 |
-| QQ 机器人(NapCat) | 可选,设置 `QQ_WEBHOOK` + `QQ_TOKEN` + `QQ_USER_ID` 后启用,低价商品推送 QQ 私聊 |
+| QQ 机器人(NapCat) | 可选,设置 `QQ_WEBHOOK` + `QQ_TOKEN` + `QQ_USER_ID` 后启用,**每次新上架**推送 QQ 私聊(与价格无关,独立去重 `qq_seen.json`) |
 | Windows 桌面通知 | 仅本机(Windows),低价商品右下角 toast |
 | 企业微信机器人 | 可选,设置 `WECOM_WEBHOOK` 后启用 |
 | 控制台 / `watch.log` | 每次运行输出统计与低价列表 |
@@ -218,7 +218,7 @@ export QQ_TOKEN=你的NapCatToken        # 如配置了认证
 export QQ_USER_ID=接收消息的QQ号
 ```
 
-设置后,低价商品和监控异常都会推送 QQ 私聊(中文 UTF-8,无乱码)。微信推送可同时保留。
+设置后,**每次最新商品上新**推送 QQ 私聊(🆕 新上架,与价格无关;独立去重,同一商品只推一次);**低价商品**仍按原规则推送微信。监控异常也会推 QQ。中文 UTF-8,无乱码。
 
 ## 项目结构
 
