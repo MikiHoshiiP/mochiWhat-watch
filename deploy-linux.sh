@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Mercari もちwhat 监控 - Linux 部署脚本(服务器上执行)
+# Mercari もちwhat 监控 - Linux 部署脚本(Ubuntu,服务器上执行)
 # 前提:代码已获取到本机(如 git clone 或 scp),脚本在项目根目录下运行。
 # 用法: bash deploy-linux.sh [项目目录]
 set -euo pipefail
@@ -28,7 +28,10 @@ cd "$APP_DIR"
 npm install
 
 echo "==> 3/4 配置环境"
-read -rp "请输入 Server酱 SendKey(留空跳过): " SCT
+read -rp "请输入 Server酱 SendKey(微信推送,留空跳过): " SCT
+read -rp "NapCat HTTP 地址(如 http://127.0.0.1:3000/send_group_msg,留空禁用 QQ): " QQWB
+read -rp "NapCat Token(留空则无): " QQTK
+read -rp "QQ 群号(留空则无): " QQGID
 
 cat > mercari-watch.service <<EOF
 [Unit]
@@ -44,6 +47,9 @@ RestartSec=10
 Environment=PROXY=direct
 Environment=SCT_KEY=${SCT:-}
 Environment=BROWSER_CHANNEL=chromium
+Environment=QQ_WEBHOOK=${QQWB:-}
+Environment=QQ_TOKEN=${QQTK:-}
+Environment=QQ_GROUP_ID=${QQGID:-}
 
 [Install]
 WantedBy=multi-user.target
