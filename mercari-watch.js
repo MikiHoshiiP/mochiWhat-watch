@@ -356,22 +356,30 @@ async function notify(items) {
 // 渠道:桌面 toast + Server酱 + QQ。告警限频:同一级别至少隔 30 分钟。
 
 // QQ 机器人通用发送(NapCat OneBot v11)
+// 目标:设 QQ_USER_ID(私聊)或 QQ_GROUP_ID(群聊),两者都设则都发。
+// 请求体:user_id / group_id / message(OneBot 标准字段)
 async function sendQqMessage(text) {
-  if (!process.env.QQ_WEBHOOK || !process.env.QQ_USER_ID) return false;
+  const targets = [];
+  if (process.env.QQ_USER_ID) targets.push({ key: 'user_id', val: Number(process.env.QQ_USER_ID) });
+  if (process.env.QQ_GROUP_ID) targets.push({ key: 'group_id', val: Number(process.env.QQ_GROUP_ID) });
+  if (!process.env.QQ_WEBHOOK || targets.length === 0) return false;
+  let ok = false;
   try {
     const headers = { 'Content-Type': 'application/json' };
     if (process.env.QQ_TOKEN) headers['Authorization'] = 'Bearer ' + process.env.QQ_TOKEN;
-    const resp = await fetch(process.env.QQ_WEBHOOK, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ user_id: Number(process.env.QQ_USER_ID), message: text }),
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    const result = await resp.json();
-    if (result.retcode === 0 || result.status === 'ok') return true;
-    console.error('[!] QQ 通知失败:', JSON.stringify(result));
-    return false;
-  } catch (e) { console.error('[!] QQ 通知失败:', e.message); return false; }
+    for (const t of targets) {
+      const resp = await fetch(process.env.QQ_WEBHOOK, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ [t.key]: t.val, message: text }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      const result = await resp.json();
+      if (result.retcode === 0 || result.status === 'ok') ok = true;
+      else console.error('[!] QQ 通知失败(' + t.key + '):', JSON.stringify(result));
+    }
+    return ok;
+  } catch (e) { console.error('[!] QQ 通知失败:', e.message); return ok; }
 }
 
 let lastAlertAt = 0;
@@ -433,7 +441,7 @@ async function runOnce() {
   console.log(`[*] 匹配规则:${ruleLabel},价格阈值 ¥${priceLimit.toLocaleString()}`);
 
   // QQ 通道:新上架即推(与价格无关),独立去重 qq_seen.json
-  if (process.env.QQ_WEBHOOK && process.env.QQ_USER_ID) {
+  if (process.env.QQ_WEBHOOK && (process.env.QQ_USER_ID || process.env.QQ_GROUP_ID)) {
     const qqSeen = loadSeen(CONFIG.stateFile.replace('seen.json', 'qq_seen.json'));
     if (!qqSeen.has(latest.url)) {
       const qqMsg = `🆕 新上架:${latest.title}\n¥${latest.price.toLocaleString()}\n${latest.url}`;
