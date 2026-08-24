@@ -175,6 +175,9 @@ const CONFIG = {
 | `DPOP` | Mercari API 令牌(CI 从 Secret 注入;本机默认读 `dpop.json`) |
 | `BROWSER_CHANNEL` | 浏览器通道,覆盖默认选择:`msedge` / `chrome` / `chromium`。默认自动:Windows→系统 Edge,其他→系统 Chrome;系统浏览器缺失时自动回退 Playwright 自带 chromium(如精简服务器/容器) |
 | `WECOM_WEBHOOK` | 企业微信群机器人 webhook(可选) |
+| `QQ_WEBHOOK` | QQ 机器人(NapCat OneBot)HTTP 端点,如 `http://127.0.0.1:3000/send_private_msg` |
+| `QQ_TOKEN` | NapCat 的 access token(如配置了认证) |
+| `QQ_USER_ID` | 接收通知的 QQ 号 |
 
 ## 微信推送
 
@@ -198,11 +201,24 @@ node mercari-watch.js --loop 1
 | 渠道 | 说明 |
 |---|---|
 | Server酱 → 微信 | 主要渠道(云端与本机共用),低价商品推送微信「服务通知」 |
+| QQ 机器人(NapCat) | 可选,设置 `QQ_WEBHOOK` + `QQ_TOKEN` + `QQ_USER_ID` 后启用,低价商品推送 QQ 私聊 |
 | Windows 桌面通知 | 仅本机(Windows),低价商品右下角 toast |
 | 企业微信机器人 | 可选,设置 `WECOM_WEBHOOK` 后启用 |
 | 控制台 / `watch.log` | 每次运行输出统计与低价列表 |
 
 > 全部通知渠道失败时,商品不会被标记为已通知(下轮重试),并以非零退出码暴露(CI 会显示红色)。
+
+## QQ 机器人接入
+
+用 [NapCatQQ](https://napcat.napneko.icu)(OneBot v11 实现)用小号登录常驻,启用 **HTTP 服务器**(默认 `127.0.0.1:3000`),然后设置环境变量:
+
+```bash
+export QQ_WEBHOOK=http://127.0.0.1:3000/send_private_msg
+export QQ_TOKEN=你的NapCatToken        # 如配置了认证
+export QQ_USER_ID=接收消息的QQ号
+```
+
+设置后,低价商品和监控异常都会推送 QQ 私聊(中文 UTF-8,无乱码)。微信推送可同时保留。
 
 ## 项目结构
 

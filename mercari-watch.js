@@ -324,7 +324,10 @@ async function notify(items) {
     } catch (e) { console.error('[!] Server酱通知失败:', e.message); }
   }
 
-  // 3) 企业微信机器人(配置 WECOM_WEBHOOK 后启用),完整列表
+  // 3) QQ 机器人(NapCat OneBot,配置 QQ_WEBHOOK + QQ_USER_ID 后启用)
+  if (await sendQqMessage(body)) { console.log('[✓] 已发送 QQ 通知'); delivered = true; }
+
+  // 4) 企业微信机器人(配置 WECOM_WEBHOOK 后启用),完整列表
   if (process.env.WECOM_WEBHOOK) {
     try {
       const resp = await fetch(process.env.WECOM_WEBHOOK, {
@@ -340,7 +343,7 @@ async function notify(items) {
     } catch (e) { console.error('[!] 企业微信通知失败:', e.message); }
   }
 
-  // 4) 控制台输出(始终),完整列表
+  // 5) 控制台输出(始终),完整列表
   console.log('\n[低价商品 ' + items.length + ' 件]');
   console.log(body);
 
@@ -349,7 +352,26 @@ async function notify(items) {
 
 // ---------- 告警 ----------
 // 监控异常时推送(连续失败等)。与 notify 分离:不改变商品去重语义。
-// 渠道:桌面 toast(如有 SCT_KEY) + Server酱。告警限频:同一级别至少隔 30 分钟。
+// 渠道:桌面 toast + Server酱 + QQ。告警限频:同一级别至少隔 30 分钟。
+
+// QQ 机器人通用发送(NapCat OneBot v11)
+async function sendQqMessage(text) {
+  if (!process.env.QQ_WEBHOOK || !process.env.QQ_USER_ID) return false;
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (process.env.QQ_TOKEN) headers['Authorization'] = 'Bearer ' + process.env.QQ_TOKEN;
+    const resp = await fetch(process.env.QQ_WEBHOOK, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ user_id: Number(process.env.QQ_USER_ID), message: text }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    const result = await resp.json();
+    if (result.retcode === 0 || result.status === 'ok') return true;
+    console.error('[!] QQ 通知失败:', JSON.stringify(result));
+    return false;
+  } catch (e) { console.error('[!] QQ 通知失败:', e.message); return false; }
+}
 
 let lastAlertAt = 0;
 const ALERT_MIN_INTERVAL = 30 * 60 * 1000; // 30 分钟
@@ -386,6 +408,8 @@ async function sendAlert(message) {
       else console.error('[!] 异常微信通知失败:', JSON.stringify(result));
     } catch (e) { console.error('[!] 异常微信通知失败:', e.message); }
   }
+
+  if (await sendQqMessage('⚠️ もちwhat 监控异常\n' + message)) console.log('[✓] 已发送异常 QQ 通知');
 }
 
 // ---------- 主流程 ----------
