@@ -169,7 +169,38 @@ async function fetchViaBrowser() {
       for (let i = 0; i < 10 && !apiJson; i++) await page.waitForTimeout(1000);
       if (!apiJson && attempt < 2) console.warn('[*] 排序切换未触发新着順请求,重试…');
     }
-    if (!apiJson) return [];
+    // 优先用 API 拦截的 JSON;失败则从页面 DOM 解析(列表顺序即当前排序)
+    if (!apiJson) {
+      // 防护:确认排序已切到新着順,否则 DOM 拿到的不是最新序
+      const sortVal = await page.evaluate(() => {
+        const sel = document.querySelector('select[name="sortOrder"]');
+        return sel ? sel.value : '';
+      });
+      if (sortVal !== 'created_time:desc') {
+        console.warn('[*] 排序未生效(select=' + sortVal + '),无法确认最新序,放弃 DOM 解析');
+        return [];
+      }
+      console.warn('[*] 未拦截到新着順 API 响应,改用 DOM 解析');
+      const items = await page.locator('li[data-testid="item-cell"]').evaluateAll((els) =>
+        els.map((el) => {
+          const text = (el.innerText || '').replace(/\n+/g, ' ').trim();
+          const priceMatch = text.match(/¥\s*([\d,]+)/);
+          const link = el.querySelector('a[href*="/item/"], a[href*="/shops/product/"]');
+          const href = link ? link.getAttribute('href') : '';
+          return {
+            id: href.replace('/item/', '').replace('/shops/product/', ''),
+            title: text.replace(/^\s*¥\s*[\d,]+\s*/, '').trim(),
+            name: text.replace(/^\s*¥\s*[\d,]+\s*/, '').trim(),
+            price: priceMatch ? parseInt(priceMatch[1].replace(/,/g, ''), 10) : 0,
+            status: '',
+            created: 0,
+            url: href ? 'https://jp.mercari.com' + href : '',
+          };
+        })
+      );
+      if (items.length > 0) return items;
+      return [];
+    }
     return (apiJson.items || []).map((it) => ({
       id: it.id,
       title: it.name || '',
