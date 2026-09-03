@@ -181,24 +181,41 @@ async function fetchViaBrowser() {
         return [];
       }
       console.warn('[*] 未拦截到新着順 API 响应,改用 DOM 解析');
-      const items = await page.locator('li[data-testid="item-cell"]').evaluateAll((els) =>
-        els.map((el) => {
-          const text = (el.innerText || '').replace(/\n+/g, ' ').trim();
-          const priceMatch = text.match(/¥\s*([\d,]+)/);
-          const link = el.querySelector('a[href*="/item/"], a[href*="/shops/product/"]');
-          const href = link ? link.getAttribute('href') : '';
-          return {
-            id: href.replace('/item/', '').replace('/shops/product/', ''),
-            title: text.replace(/^\s*¥\s*[\d,]+\s*/, '').trim(),
-            name: text.replace(/^\s*¥\s*[\d,]+\s*/, '').trim(),
-            price: priceMatch ? parseInt(priceMatch[1].replace(/,/g, ''), 10) : 0,
-            status: '',
-            created: 0,
-            url: href ? 'https://jp.mercari.com' + href : '',
-          };
-        })
-      );
-      if (items.length > 0) return items;
+      // 等商品卡片出现(网络慢时列表渲染滞后,轮询最多 20 秒)
+      let domItems = [];
+      for (let w = 0; w < 20; w++) {
+        domItems = await page.locator('li[data-testid="item-cell"]').evaluateAll((els) =>
+          els.map((el) => {
+            const text = (el.innerText || '').replace(/\n+/g, ' ').trim();
+            const priceMatch = text.match(/¥\s*([\d,]+)/);
+            const link = el.querySelector('a[href*="/item/"], a[href*="/shops/product/"]');
+            const href = link ? link.getAttribute('href') : '';
+            return {
+              id: href.replace('/item/', '').replace('/shops/product/', ''),
+              title: text.replace(/^\s*¥\s*[\d,]+\s*/, '').trim(),
+              name: text.replace(/^\s*¥\s*[\d,]+\s*/, '').trim(),
+              price: priceMatch ? parseInt(priceMatch[1].replace(/,/g, ''), 10) : 0,
+              status: '',
+              created: 0,
+              url: href ? 'https://jp.mercari.com' + href : '',
+            };
+          })
+        ).then((arr) => arr.filter((i) => i.url && i.price > 0));
+        if (domItems.length > 0) break;
+        await page.waitForTimeout(1000);
+      }
+      if (domItems.length > 0) return domItems;
+      // 商品始终未出现:打印页面状态,便于区分「网络慢/风控/空结果」
+      const diag = await page.evaluate(() => {
+        const body = (document.body.innerText || '').slice(0, 300).replace(/\n+/g, ' | ');
+        return {
+          url: location.href,
+          title: document.title,
+          hasCF: /Just a moment|cf-chl|challenge/i.test(document.body.innerHTML || ''),
+          bodySnippet: body,
+        };
+      });
+      console.error('[!] DOM 解析仍无商品,页面诊断:', JSON.stringify(diag));
       return [];
     }
     return (apiJson.items || []).map((it) => ({
