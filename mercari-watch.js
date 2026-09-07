@@ -147,6 +147,18 @@ async function fetchViaBrowser() {
     });
     const page = await ctx.newPage();
     let apiJson = null;
+    // 捕获浏览器请求携带的新 dpop 令牌:浏览器每次会话都会生成有效令牌,
+    // 存回 dpop.json + 环境变量,下一轮 curl API 即可用新令牌(修复
+    // 「curl 令牌失效 → 浏览器成功 → 熔断重置 → 令牌永不刷新」的死循环)
+    page.on('request', (r) => {
+      if (r.url().includes('entities:search')) {
+        const dpop = r.headers()['dpop'];
+        if (dpop && dpop !== process.env.DPOP) {
+          process.env.DPOP = dpop;
+          try { fs.writeFileSync(__dirname + '/dpop.json', JSON.stringify({ captured: Date.now(), dpop })); } catch {}
+        }
+      }
+    });
     // 只拦截「新着順」的 API 响应:页面默认是推荐排序(SORT_SCORE),
     // 切换排序后才会发出 sort=SORT_CREATED_TIME 的请求
     page.on('response', async (r) => {
