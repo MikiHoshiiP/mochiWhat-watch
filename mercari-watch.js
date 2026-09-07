@@ -139,11 +139,25 @@ async function fetchViaBrowser() {
   try {
     const proxyServer = process.env.PROXY === 'direct' ? null : (process.env.PROXY || 'http://127.0.0.1:7897');
     const ctxProxy = proxyServer ? { proxy: { server: proxyServer } } : {};
-    browser = await chromium.launch({ headless: true, channel });
+    // 反自动化检测:Mercari 对 headless 浏览器(webdriver 标记)会显示
+    // 「浏览器不受支持」并不渲染商品列表(间歇性 0 件)。禁用自动化特征。
+    const STEALTH_ARGS = [
+      '--disable-blink-features=AutomationControlled',
+      '--disable-features=IsolateOrigins,site-per-process',
+    ];
+    const launchOpts = { headless: true, channel };
+    if (!process.env.BROWSER_CHANNEL || process.env.BROWSER_CHANNEL !== 'msedge') {
+      launchOpts.args = STEALTH_ARGS; // msedge channel 部分参数不适用,仅 chromium/chrome 加
+    }
+    browser = await chromium.launch(launchOpts);
     const ctx = await browser.newContext({
       ...ctxProxy,
       locale: 'ja-JP',
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    });
+    // 抹除 webdriver 标记(页面可检测 navigator.webdriver === true)
+    await ctx.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
     });
     const page = await ctx.newPage();
     let apiJson = null;
