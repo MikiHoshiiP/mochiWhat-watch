@@ -562,13 +562,23 @@ async function runOnce() {
 
 async function main() {
   const args = process.argv.slice(2);
-  if (args.includes('--loop')) {
-    const idx = args.indexOf('--loop');
-    const raw = parseInt(args[idx + 1], 10);
-    // 校验:正数且 ≤ 1440(24h)。负/NaN/超大回退默认。
-    // 极大值会超出 setTimeout 上限(约 24.8 天),被压缩为 ~1ms 连续请求。
-    const minutes = Number.isFinite(raw) && raw >= 1 && raw <= 1440 ? raw : CONFIG.loopMinutes;
-    console.log(`[*] 循环模式:每 ${minutes} 分钟检查一次`);
+  const loopIdx = args.indexOf('--loop');
+  const loopSecIdx = args.indexOf('--loop-sec');
+  if (loopIdx >= 0 || loopSecIdx >= 0) {
+    // 间隔:--loop N(分钟)或 --loop-sec N(秒),后者优先
+    let intervalMs;
+    if (loopSecIdx >= 0) {
+      const raw = parseInt(args[loopSecIdx + 1], 10);
+      intervalMs = Number.isFinite(raw) && raw >= 5 ? raw * 1000 : CONFIG.loopMinutes * 60000;
+      console.log(`[*] 循环模式:每 ${intervalMs / 1000} 秒检查一次`);
+    } else {
+      const raw = parseInt(args[loopIdx + 1], 10);
+      // 校验:正数且 ≤ 1440(24h)。负/NaN/超大回退默认。
+      // 极大值会超出 setTimeout 上限(约 24.8 天),被压缩为 ~1ms 连续请求。
+      const minutes = Number.isFinite(raw) && raw >= 1 && raw <= 1440 ? raw : CONFIG.loopMinutes;
+      intervalMs = minutes * 60000;
+      console.log(`[*] 循环模式:每 ${minutes} 分钟检查一次`);
+    }
     let consecutiveFailures = 0; // 连续失败计数(可靠性告警)
     while (true) {
       rotateLog(); // 每次循环前检查日志大小
@@ -583,7 +593,7 @@ async function main() {
           await sendAlert(`监控连续 ${consecutiveFailures} 次抓取失败,请检查代理/网络。\n最近错误:${e.message}`);
         }
       }
-      await new Promise((r) => setTimeout(r, minutes * 60 * 1000));
+      await new Promise((r) => setTimeout(r, intervalMs));
     }
   } else {
     // 单次模式(如 CI):失败也发告警,便于发现静默故障
