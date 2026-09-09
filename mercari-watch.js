@@ -231,7 +231,39 @@ async function fetchViaBrowser() {
         await page.waitForTimeout(1000);
       }
       if (domItems.length > 0) return domItems;
-      // 商品始终未出现:打印页面状态,便于区分「网络慢/风控/空结果」
+      // 商品始终未出现:限速通常为短窗口,整页刷新重试一轮(最多 1 次)
+      console.warn('[*] DOM 解析无商品,刷新页面重试…');
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: CONFIG.timeout }).catch(() => {});
+      await page.waitForSelector('select[name="sortOrder"]', { timeout: CONFIG.timeout }).catch(() => {});
+      const sortSel2 = page.locator('select[name="sortOrder"]');
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await sortSel2.selectOption('created_time:desc').catch(() => {});
+        // 等待商品卡片出现(轮询最多 15 秒)
+        let retryItems = [];
+        for (let w = 0; w < 15 && retryItems.length === 0; w++) {
+          retryItems = await page.locator('li[data-testid="item-cell"]').evaluateAll((els) =>
+            els.map((el) => {
+              const text = (el.innerText || '').replace(/\n+/g, ' ').trim();
+              const priceMatch = text.match(/¥\s*([\d,]+)/);
+              const link = el.querySelector('a[href*="/item/"], a[href*="/shops/product/"]');
+              const href = link ? link.getAttribute('href') : '';
+              return {
+                id: href.replace('/item/', '').replace('/shops/product/', ''),
+                title: text.replace(/^\s*¥\s*[\d,]+\s*/, '').trim(),
+                name: text.replace(/^\s*¥\s*[\d,]+\s*/, '').trim(),
+                price: priceMatch ? parseInt(priceMatch[1].replace(/,/g, ''), 10) : 0,
+                status: '',
+                created: 0,
+                url: href ? 'https://jp.mercari.com' + href : '',
+              };
+            })
+          ).then((arr) => arr.filter((i) => i.url && i.price > 0));
+          if (retryItems.length > 0) await page.waitForTimeout(500);
+        }
+        if (retryItems.length > 0) return retryItems;
+        await page.waitForTimeout(1000);
+      }
+      // 重试仍无商品:打印页面状态,便于区分「网络慢/风控/空结果」
       const diag = await page.evaluate(() => {
         const body = (document.body.innerText || '').slice(0, 300).replace(/\n+/g, ' | ');
         return {
@@ -241,7 +273,7 @@ async function fetchViaBrowser() {
           bodySnippet: body,
         };
       });
-      console.error('[!] DOM 解析仍无商品,页面诊断:', JSON.stringify(diag));
+      console.error('[!] 刷新重试后仍无商品,页面诊断:', JSON.stringify(diag));
       return [];
     }
     return (apiJson.items || []).map((it) => ({
